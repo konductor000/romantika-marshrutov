@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+# coding: utf-8
+"""Собрать публичную страницу сезона из бот/сезон.json.
+
+    python3 сайт.py
+
+Кладёт готовый docs/index.html. Данные вшиваются прямо в файл, а не
+подтягиваются с raw.githubusercontent: он у нас через раз недоступен,
+и страница бы просто не открылась. Значит после правки сезон.json
+нужно прогнать этот скрипт заново и запушить.
+"""
+
+import io
+import json
+import os
+from html import escape
+
+КОРЕНЬ = os.path.dirname(os.path.abspath(__file__))
+СЕЗОН_ФАЙЛ = os.path.join(КОРЕНЬ, "бот", "сезон.json")
+ВЫХОД = os.path.join(КОРЕНЬ, "docs", "index.html")
+
+БОТ = "https://t.me/romantika_marshrutov_bot"
+КАНАЛ = "https://t.me/romantika_marshrutov"
+КАЛЕНДАРЬ = "https://t.me/romantika_marshrutov_bot/calendar"
+
+МЕСЯЦЫ = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+          "августа", "сентября", "октября", "ноября", "декабря"]
+
+
+def по_русски(строка, с_годом=False):
+    г, м, д = (int(ч) for ч in строка.split("-"))
+    итог = str(д) + " " + МЕСЯЦЫ[м - 1]
+    return итог + " " + str(г) if с_годом else итог
+
+
+def собрать():
+    with io.open(СЕЗОН_ФАЙЛ, encoding="utf-8") as ф:
+        сезон = json.load(ф)
+
+    данные = {
+        "season": сезон["season"],
+        "start": сезон["start"],
+        "end": сезон["end"],
+        "daily": сезон.get("daily") or {},
+        "weeks": [
+            {к: н.get(к, "") for к in
+             ("num", "title", "start", "end", "intro",
+              "minimum", "maximum", "word", "word_ru", "word_meaning")}
+            for н in сезон["weeks"]
+        ],
+        "achievements": сезон.get("achievements", []),
+    }
+
+    страница = ШАБЛОН.replace("/*ДАННЫЕ*/", json.dumps(данные, ensure_ascii=False))
+    страница = страница.replace("{{СЕЗОН}}", escape(сезон["season"]))
+    страница = страница.replace("{{ПЕРИОД}}", escape(
+        по_русски(сезон["start"]) + " — " + по_русски(сезон["end"], True)))
+    страница = страница.replace("{{БОТ}}", БОТ)
+    страница = страница.replace("{{КАНАЛ}}", КАНАЛ)
+    страница = страница.replace("{{КАЛЕНДАРЬ}}", КАЛЕНДАРЬ)
+
+    os.makedirs(os.path.dirname(ВЫХОД), exist_ok=True)
+    with io.open(ВЫХОД, "w", encoding="utf-8") as ф:
+        ф.write(страница)
+    print("Готово:", ВЫХОД)
+    print("Недель:", len(данные["weeks"]),
+          "· ачивок:", len(данные["achievements"]))
+
+
+ШАБЛОН = r"""<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Романтика маршрутов · {{СЕЗОН}}</title>
+<meta name="description" content="Клуб, где раз в три месяца рандомайзер выбирает страну, и мы проживаем её по неделям. Сейчас — {{СЕЗОН}}.">
+<meta property="og:title" content="Романтика маршрутов · {{СЕЗОН}}">
+<meta property="og:description" content="Раз в три месяца выпадает новая страна, и мы проживаем её по неделям. Не читаем — делаем.">
+<meta property="og:type" content="website">
+<style>
+:root{
+  --фон:#fdfaf5; --текст:#2b2320; --акцент:#b4472f; --тихий:#7a6a60;
+  --бледный:#a6968a; --карточка:#fffdf9; --тёплый:#fdf3ee; --линия:#e8ddd2;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--фон); color:var(--текст);
+  font:17px/1.6 Georgia,'Times New Roman',serif;
+  padding:0 18px 64px;
+}
+.лист{max-width:620px;margin:0 auto}
+h1,h2,h3{font-weight:normal;margin:0}
+.служебный{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+
+/* ── шапка ── */
+header{padding:44px 0 30px;border-bottom:2px solid var(--акцент)}
+.клуб{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--акцент);margin-bottom:14px;
+}
+h1{font-size:40px;line-height:1.08;letter-spacing:-.01em}
+.период{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:14px;color:var(--тихий);margin-top:12px;
+}
+.полоса{display:flex;gap:3px;margin-top:18px}
+.полоса i{flex:1;height:5px;border-radius:3px;background:var(--линия)}
+.полоса i.было{background:var(--акцент)}
+.полоса i.сейчас{background:var(--акцент);opacity:.55}
+
+/* ── сегодня ── */
+.сегодня{
+  background:var(--тёплый);border-left:3px solid var(--акцент);
+  padding:20px 22px;margin:30px 0 10px;border-radius:0 8px 8px 0;
+}
+.сегодня .дата{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--бледный);margin-bottom:10px;
+}
+.знак{font-size:27px;line-height:1.2;color:var(--акцент)}
+.знак small{font-size:16px;color:var(--тихий)}
+.смысл{font-style:italic;color:var(--тихий);margin-top:6px;font-size:16px}
+.сегодня .слово{margin-top:16px;padding-top:14px;border-top:1px solid #ecdcd2}
+.сегодня .слово b{color:var(--акцент);font-weight:normal;font-size:19px}
+
+section{margin-top:46px}
+h2{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:12px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--бледный);margin-bottom:18px;
+}
+p{margin:0 0 16px}
+.крупно{font-size:20px;line-height:1.55}
+
+/* ── правила ── */
+.правила{list-style:none;padding:0;margin:0}
+.правила li{
+  padding:15px 0;border-bottom:1px solid var(--линия);
+  display:flex;gap:15px;align-items:baseline;
+}
+.правила li:last-child{border-bottom:0}
+.правила .что{
+  flex:0 0 96px;color:var(--акцент);font-size:15px;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+}
+.правила .как{flex:1;font-size:16px}
+
+/* ── недели ── */
+.неделя{
+  background:var(--карточка);border:1px solid var(--линия);
+  border-radius:10px;padding:18px 20px;margin-bottom:12px;
+}
+.неделя.идёт{border-color:var(--акцент);background:var(--тёплый)}
+.неделя.прошла{opacity:.62}
+.шапочка{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.номер{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--бледный);
+}
+.неделя.идёт .номер{color:var(--акцент)}
+.когда{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:12px;color:var(--бледный);white-space:nowrap;
+}
+.название{font-size:22px;margin:5px 0 0}
+.вступление{color:var(--тихий);font-size:16px;margin-top:9px}
+.задания{margin-top:14px;padding-top:13px;border-top:1px solid var(--линия)}
+.задание{margin-bottom:9px;font-size:16px}
+.задание:last-child{margin-bottom:0}
+.задание b{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--акцент);font-weight:600;display:block;margin-bottom:2px;
+}
+.словцо{
+  margin-top:13px;padding-top:12px;border-top:1px solid var(--линия);
+  font-size:15px;color:var(--тихий);
+}
+.словцо b{color:var(--акцент);font-weight:normal;font-size:17px}
+.впереди{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:12px;color:var(--бледный);margin-top:12px;
+}
+
+/* ── ачивки ── */
+.ачивки{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px}
+.ачивка{
+  background:var(--карточка);border:1px solid var(--линия);
+  border-radius:10px;padding:14px;
+}
+.ачивка .знак2{font-size:22px;line-height:1}
+.ачивка .имя{margin-top:7px;font-size:16px}
+.ачивка .за{color:var(--тихий);font-size:14px;margin-top:3px;line-height:1.4}
+
+/* ── кнопки ── */
+.кнопки{margin-top:30px;display:flex;flex-direction:column;gap:10px}
+a.кнопка{
+  display:block;text-align:center;text-decoration:none;padding:16px;
+  border-radius:10px;font-size:17px;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+}
+a.главная{background:var(--акцент);color:#fff}
+a.вторая{background:transparent;color:var(--акцент);border:1px solid var(--акцент)}
+footer{
+  margin-top:52px;padding-top:22px;border-top:1px solid var(--линия);
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:13px;color:var(--бледный);
+}
+footer a{color:var(--тихий)}
+
+@media(min-width:560px){
+  h1{font-size:52px}
+  .кнопки{flex-direction:row}
+  a.кнопка{flex:1}
+}
+</style>
+</head>
+<body>
+<div class="лист">
+
+<header>
+  <div class="клуб">Романтика маршрутов</div>
+  <h1>Сезон первый:<br>{{СЕЗОН}}</h1>
+  <div class="период">{{ПЕРИОД}}</div>
+  <div class="полоса" id="полоса"></div>
+</header>
+
+<div class="сегодня" id="сегодня"></div>
+
+<section>
+  <h2>Что это</h2>
+  <p class="крупно">Раз в три месяца рандомайзер выбирает страну, и мы проживаем
+  её по неделям. Не читаем про неё — делаем: готовим, рисуем, смотрим,
+  ходим ногами, пробуем говорить.</p>
+  <p>Никто не эксперт и не собирается им становиться. Смысл в том, чтобы
+  двенадцать недель подряд пробовать незнакомое — и посмотреть, что из этого
+  останется с тобой.</p>
+</section>
+
+<section>
+  <h2>Как это устроено</h2>
+  <ul class="правила">
+    <li><div class="что">Понедельник</div><div class="как">Выходит задание недели: минимум на пять минут и максимум на вечер. Оба необязательные.</div></li>
+    <li><div class="что">Сделал</div><div class="как">Присылаешь фото или пару слов в бота — и получаешь штамп в паспорт сезона.</div></li>
+    <li><div class="что">Пропустил</div><div class="как">Тратится заморозка. Их две на сезон, и цепочка от пропуска не рвётся. Это клуб, а не школа.</div></li>
+    <li><div class="что">Воскресенье</div><div class="как">«Привал» — итоги недели с именами тех, кто дошёл.</div></li>
+    <li><div class="что">В конце</div><div class="как">У каждого участника свой журнал сезона: его недели его же словами, фотографии, слова и ачивки. И жеребьёвка следующей страны.</div></li>
+  </ul>
+</section>
+
+<section>
+  <h2>Двенадцать недель</h2>
+  <div id="недели"></div>
+</section>
+
+<section>
+  <h2>Ачивки сезона</h2>
+  <div class="ачивки" id="ачивки"></div>
+</section>
+
+<div class="кнопки">
+  <a class="кнопка главная" href="{{БОТ}}">Открыть бота</a>
+  <a class="кнопка вторая" href="{{КАНАЛ}}">Читать канал</a>
+</div>
+
+<footer>
+  Счёт дней настоящий: цолькин ведут непрерывно больше двух тысяч лет,
+  и в Гватемале ведут до сих пор. Толкования знаков традиционные.
+  <a href="{{КАЛЕНДАРЬ}}">Посмотреть свой день рождения</a>.
+</footer>
+
+</div>
+
+<script>
+const СЕЗОН = /*ДАННЫЕ*/;
+
+/* ── цолькин: та же корреляция GMT-584283, что в боте и в календаре ── */
+const ЗНАКИ = [
+ ["Имиш","водяная лилия","первооснова, начало, то, из чего всё растёт"],
+ ["Ик","ветер","дыхание и слово: день сказать вслух то, что думал молча"],
+ ["Акбаль","ночь","дом и темнота: день оставаться у себя и восстанавливаться"],
+ ["Кан","зерно","зрелость: то, что посеяли раньше, готово"],
+ ["Чикчан","змея","жизненная сила, телесность, чутьё"],
+ ["Кими","переход","день отпускать и заканчивать, а не начинать"],
+ ["Маник","олень","рука и хватка: день делать, а не рассуждать"],
+ ["Ламат","звезда","изобилие и щедрость, день делиться"],
+ ["Мулук","вода","день благодарности и того, что отдаёшь"],
+ ["Ок","собака","верность и проводник: день про тех, кто рядом"],
+ ["Чуэн","обезьяна","мастер и игра: день делать руками и не всерьёз"],
+ ["Эб","дорога","путь и лестница: день идти своим маршрутом"],
+ ["Бен","тростник","рост и дом: день про семью и то, что держит"],
+ ["Иш","ягуар","земля и тайна: день слушать, а не говорить"],
+ ["Мен","орёл","видение: день смотреть с высоты и дальше, чем обычно"],
+ ["Киб","свеча","предки и память: день спросить у тех, кто был до"],
+ ["Кабан","земля","движение и мысль: день, когда что-то сдвигается"],
+ ["Эцнаб","кремень","нож и зеркало: день правды, даже неудобной"],
+ ["Кавак","гроза","буря и обновление: день, после которого чисто"],
+ ["Ахау","владыка","солнце и завершение: день закрывать круг"]
+];
+const МЕСЯЦЫ=["января","февраля","марта","апреля","мая","июня","июля",
+              "августа","сентября","октября","ноября","декабря"];
+
+function юлианский(д){
+  const м=д.getMonth()+1, a=Math.floor((14-м)/12),
+        y=д.getFullYear()+4800-a, m=м+12*a-3;
+  return д.getDate()+Math.floor((153*m+2)/5)+365*y+Math.floor(y/4)
+         -Math.floor(y/100)+Math.floor(y/400)-32045;
+}
+function цолькин(д){
+  const x=юлианский(д)-584283;
+  return {число:(((x+3)%13)+13)%13+1, знак:ЗНАКИ[((x+19)%20+20)%20]};
+}
+const дата=с=>{const[г,м,д]=с.split("-").map(Number);return new Date(г,м-1,д);};
+const порусски=с=>{const[,м,д]=с.split("-").map(Number);
+                   return д+" "+МЕСЯЦЫ[м-1];};
+const текст=с=>{const у=document.createElement("div");у.textContent=с;
+                return у.innerHTML;};
+
+const сегодня=new Date(); сегодня.setHours(0,0,0,0);
+const недели=СЕЗОН.weeks.map(н=>({...н, от:дата(н.start), до:дата(н.end)}));
+const идёт=недели.find(н=>н.от<=сегодня&&сегодня<=н.до);
+
+/* ── полоса сезона ── */
+document.getElementById("полоса").innerHTML = недели.map(н=>{
+  const к = н.до<сегодня ? "было" : (н===идёт ? "сейчас" : "");
+  return '<i class="'+к+'"></i>';
+}).join("");
+
+/* ── блок «сегодня» ── */
+(function(){
+  const ц=цолькин(сегодня), части=[];
+  части.push('<div class="дата">'+сегодня.getDate()+" "
+             +МЕСЯЦЫ[сегодня.getMonth()]+"</div>");
+  if((СЕЗОН.daily||{}).kind==="tzolkin"){
+    части.push('<div class="знак">'+ц.число+" "+ц.знак[0]
+               +' <small>· '+ц.знак[1]+"</small></div>");
+    части.push('<div class="смысл">'+ц.знак[2]+"</div>");
+  }
+  if(идёт&&идёт.word){
+    части.push('<div class="слово">Слово недели: <b>'+текст(идёт.word)+"</b>"
+      +(идёт.word_ru?" · "+текст(идёт.word_ru):"")
+      +(идёт.word_meaning?'<div class="смысл">'+текст(идёт.word_meaning)
+                          +"</div>":"")+"</div>");
+  }
+  document.getElementById("сегодня").innerHTML=части.join("");
+})();
+
+/* ── двенадцать недель ── */
+document.getElementById("недели").innerHTML = недели.map(н=>{
+  const впереди = н.от>сегодня, прошла = н.до<сегодня;
+  const к = ["неделя", н===идёт?"идёт":"", прошла?"прошла":""].join(" ");
+  let ч = '<div class="'+к+'">'
+    + '<div class="шапочка"><div class="номер">'
+    + (н===идёт?"Идёт сейчас":"Неделя "+н.num)+"</div>"
+    + '<div class="когда">'+порусски(н.start)+" — "+порусски(н.end)+"</div></div>"
+    + '<h3 class="название">'+текст(н.title)+"</h3>";
+  if(н.intro) ч += '<div class="вступление">'+текст(н.intro)+"</div>";
+  /* задание целиком — только у начавшихся недель: то, что впереди,
+     открывается по понедельникам, и в боте, и здесь */
+  if(!впереди && (н.minimum||н.maximum)){
+    ч += '<div class="задания">';
+    if(н.minimum) ч+='<div class="задание"><b>Минимум</b>'+текст(н.minimum)+"</div>";
+    if(н.maximum) ч+='<div class="задание"><b>Максимум</b>'+текст(н.maximum)+"</div>";
+    ч += "</div>";
+  } else if(впереди){
+    ч += '<div class="впереди">Задание откроется в понедельник</div>';
+  }
+  if(!впереди && н.word){
+    ч += '<div class="словцо">Слово недели: <b>'+текст(н.word)+"</b>"
+       + (н.word_ru?" · "+текст(н.word_ru):"")
+       + (н.word_meaning?" — "+текст(н.word_meaning):"")+"</div>";
+  }
+  return ч+"</div>";
+}).join("");
+
+/* ── ачивки ── */
+document.getElementById("ачивки").innerHTML =
+  (СЕЗОН.achievements||[]).map(а=>
+    '<div class="ачивка"><div class="знак2">'+текст(а.emoji||"")+"</div>"
+    +'<div class="имя">'+текст(а.name||"")+"</div>"
+    +'<div class="за">'+текст(а.for||"")+"</div></div>").join("");
+</script>
+</body>
+</html>
+"""
+
+if __name__ == "__main__":
+    собрать()
