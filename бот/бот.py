@@ -23,11 +23,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from html import escape
 
 ЗДЕСЬ = os.path.dirname(os.path.abspath(__file__))
-БАЗА = os.path.join(ЗДЕСЬ, "данные.sqlite")
+# В контейнере база лежит на смонтированном томе, иначе она пропала бы
+# при первой же пересборке. На маке путь прежний, рядом со скриптом.
+БАЗА = os.environ.get("DB_PATH") or os.path.join(ЗДЕСЬ, "данные.sqlite")
 СЕЗОН_ФАЙЛ = os.path.join(ЗДЕСЬ, "сезон.json")
 ТОКЕН_ФАЙЛ = os.path.join(ЗДЕСЬ, "токен.txt")
 АДМИН_ФАЙЛ = os.path.join(ЗДЕСЬ, "админ.txt")
@@ -58,6 +60,23 @@ if not ТОКЕН:
 
 _админ = os.environ.get("ADMIN_ID") or прочитать(АДМИН_ФАЙЛ)
 АДМИН = int(_админ) if _админ.isdigit() else None
+
+# ── московское время считаем сами, а не по часам машины.
+# На сервере в UTC «сегодня» с 21:00 до полуночи было бы вчерашним:
+# не та неделя, не тот знак цолькина, напоминания на три часа раньше.
+# Ставить в контейнер tzdata нельзя — для этого нужен apt, а зеркало
+# Debian из нашего ЦОДа закрыто. Москва круглый год UTC+3, перевода
+# часов нет с 2014 года, так что смещение можно задать явно.
+МСК = timedelta(hours=3)
+
+
+def сейчас_мск():
+    return datetime.now(timezone.utc).replace(tzinfo=None) + МСК
+
+
+def сегодня_мск():
+    return сейчас_мск().date()
+
 
 API = "https://api.telegram.org/bot" + ТОКЕН + "/"
 
@@ -254,7 +273,7 @@ def записать_человека(от_кого):
             "INSERT INTO люди VALUES (?,?,?,?) "
             "ON CONFLICT(id) DO UPDATE SET ник=excluded.ник, имя=excluded.имя",
             (от_кого["id"], от_кого.get("username", ""), имя,
-             datetime.now().isoformat(timespec="seconds")),
+             сейчас_мск().isoformat(timespec="seconds")),
         )
     return имя
 
@@ -309,12 +328,12 @@ def править_неделю(номер, поле, значение):
             "INSERT INTO правки_недель VALUES (?,?,?,?) "
             "ON CONFLICT(неделя, поле) DO UPDATE SET значение=excluded.значение",
             (номер, поле, значение.strip(),
-             datetime.now().isoformat(timespec="seconds")))
+             сейчас_мск().isoformat(timespec="seconds")))
 
 
 def неделя_на(день=None):
     """Какая неделя сезона идёт в этот день. None — если сезон ещё/уже не идёт."""
-    день = день or date.today()
+    день = день or сегодня_мск()
     for н in недели():
         if в_дату(н["start"]) <= день <= в_дату(н["end"]):
             return н
@@ -329,7 +348,7 @@ def неделя_по_номеру(номер):
 
 
 def прошедшие_недели(на_день=None):
-    на_день = на_день or date.today()
+    на_день = на_день or сегодня_мск()
     return [н for н in недели() if в_дату(н["end"]) < на_день]
 
 
@@ -432,7 +451,7 @@ def юлианский_день(д):
 
 
 def день_цолькина(д=None):
-    д = д or date.today()
+    д = д or сегодня_мск()
     x = юлианский_день(д) - КОРРЕЛЯЦИЯ
     число = ((x + 3) % 13) + 1
     имя, символ, смысл = ЗНАКИ_ЦОЛЬКИНА[(x + 19) % 20]
@@ -440,7 +459,7 @@ def день_цолькина(д=None):
 
 
 def вышедшие_слова(д=None):
-    д = д or date.today()
+    д = д or сегодня_мск()
     return [н for н in недели() if н["word"] and в_дату(н["start"]) <= д]
 
 
@@ -459,7 +478,7 @@ def слово_на_память(д=None):
     Появляется, только когда словарь набрал хотя бы три слова: раньше
     напоминать нечем, а крутить одно и то же по кругу — обман.
     """
-    д = д or date.today()
+    д = д or сегодня_мск()
     сейчас = слово_дня(д)
     старые = [н for н in вышедшие_слова(д)
               if not сейчас or н["num"] != сейчас["num"]]
@@ -469,7 +488,7 @@ def слово_на_память(д=None):
 
 
 def текст_дня():
-    сегодня = date.today()
+    сегодня = сегодня_мск()
     ежедневное = СЕЗОН.get("daily") or {}
     строки = ["<b>🌤 " + сегодня.strftime("%d.%m") + "</b>", ""]
 
@@ -524,7 +543,7 @@ def дать_заморозку(человек, причина):
     with бд() as conn:
         conn.execute(
             "INSERT INTO заморозки (человек, причина, когда) VALUES (?,?,?)",
-            (человек, причина, datetime.now().isoformat(timespec="seconds")))
+            (человек, причина, сейчас_мск().isoformat(timespec="seconds")))
     return True
 
 
@@ -544,8 +563,8 @@ def разбор_сезона(человек):
             "SELECT пришёл FROM люди WHERE id=?", (человек,)).fetchone()
 
     пришёл = (datetime.fromisoformat(строка["пришёл"]).date()
-              if строка else date.today())
-    сегодня = date.today()
+              if строка else сегодня_мск())
+    сегодня = сегодня_мск()
 
     лимит = всего_заморозок(человек)
     состояние, заморожено, цепочка, лучшая = {}, 0, 0, 0
@@ -695,7 +714,7 @@ def выдать_ачивку(человек, что):
         conn.execute(
             "INSERT INTO ачивки VALUES (?,?,?,?)",
             (человек, код, подпись,
-             datetime.now().isoformat(timespec="seconds")),
+             сейчас_мск().isoformat(timespec="seconds")),
         )
     return код, подпись
 
@@ -731,7 +750,7 @@ def добавить_слово(человек, текст):
             "INSERT INTO свои_слова (человек, слово, значение, неделя, когда)"
             " VALUES (?,?,?,?,?)",
             (человек, текст.strip(), "", н["num"] if н else None,
-             datetime.now().isoformat(timespec="seconds")),
+             сейчас_мск().isoformat(timespec="seconds")),
         )
 
 
@@ -739,7 +758,7 @@ def словарь_сезона():
     строки = ["<b>📖 Словарик сезона · " + escape(СЕЗОН["season"]) + "</b>", ""]
 
     наши = [н for н in недели()
-            if н["word"] and в_дату(н["start"]) <= date.today()]
+            if н["word"] and в_дату(н["start"]) <= сегодня_мск()]
     if наши:
         for н in наши:
             блок = строки_слова(н)
@@ -778,7 +797,7 @@ def добавить_факт(текст, неделя=None, автор=None):
         conn.execute(
             "INSERT INTO факты (неделя, текст, когда, автор) VALUES (?,?,?,?)",
             (неделя if неделя is not None else (н["num"] if н else None),
-             текст.strip(), datetime.now().isoformat(timespec="seconds"),
+             текст.strip(), сейчас_мск().isoformat(timespec="seconds"),
              автор),
         )
 
@@ -959,7 +978,7 @@ def поставить_штамп(человек, номер, уровень):
             " VALUES (?,?,?,?,?) "
             "ON CONFLICT(человек, неделя) DO UPDATE SET уровень=excluded.уровень",
             (человек, номер, уровень,
-             datetime.now().isoformat(timespec="seconds"), название),
+             сейчас_мск().isoformat(timespec="seconds"), название),
         )
     return уровень
 
@@ -972,7 +991,7 @@ def принять_отчёт(человек, номер, вид, текст, ф
             "INSERT INTO отчёты (человек, неделя, вид, текст, файл, уровень, когда)"
             " VALUES (?,?,?,?,?,?,?)",
             (человек, номер, вид, текст, файл, уровень,
-             datetime.now().isoformat(timespec="seconds")),
+             сейчас_мск().isoformat(timespec="seconds")),
         )
         ид = кур.lastrowid
     итог = поставить_штамп(человек, номер, уровень)
@@ -1120,7 +1139,7 @@ def авто_напоминания():
     """Раз в цикл смотрим на часы. Шлём только тем, кто взялся и молчит."""
     if вспомнить("напоминания", "вкл") != "вкл":
         return
-    сейчас = datetime.now()
+    сейчас = сейчас_мск()
     н = неделя_на()
     if not н:
         return
@@ -1508,7 +1527,7 @@ def обработать_сообщение(сообщ):
                     "INSERT INTO пожелания VALUES (?,?,?) "
                     "ON CONFLICT(человек) DO UPDATE SET текст=excluded.текст",
                     (кому, текст,
-                     datetime.now().isoformat(timespec="seconds")),
+                     сейчас_мск().isoformat(timespec="seconds")),
                 )
             написать(чат, "Записала для " + escape(как_зовут(кому))
                           + ". Попадёт в его журнал в конце сезона.")
@@ -1617,7 +1636,7 @@ def обработать_сообщение(сообщ):
             conn.execute(
                 "INSERT INTO пожелания VALUES (?,?,?) "
                 "ON CONFLICT(человек) DO UPDATE SET текст=excluded.текст",
-                (кому, хвост, datetime.now().isoformat(timespec="seconds")),
+                (кому, хвост, сейчас_мск().isoformat(timespec="seconds")),
             )
         написать(чат, "Записала для " + escape(как_зовут(кому))
                       + ". Попадёт в его журнал в конце сезона.")
@@ -1801,7 +1820,7 @@ def обработать_кнопку(вызов):
                 "INSERT INTO берусь VALUES (?,?,?,?) "
                 "ON CONFLICT(человек, неделя) DO UPDATE SET выбор=excluded.выбор",
                 (человек, номер, выбор,
-                 datetime.now().isoformat(timespec="seconds")),
+                 сейчас_мск().isoformat(timespec="seconds")),
             )
         подсказка = {
             "берусь": "Записала: берёшься 💪\n\nКак сделаешь — пришли сюда "
@@ -1866,8 +1885,8 @@ def обработать_кнопку(вызов):
             написать(чат, "Кому выдаём?", люди_кнопками("ач"))
         elif данные == "п:правка":
             свободные = [н for н in недели()
-                         if в_дату(н["end"]) >= date.today()]
-            ряды = [[{"text": ("▶ " if в_дату(н["start"]) <= date.today()
+                         if в_дату(н["end"]) >= сегодня_мск()]
+            ряды = [[{"text": ("▶ " if в_дату(н["start"]) <= сегодня_мск()
                                else "🔒 ") + str(н["num"]) + " · " + н["title"],
                       "callback_data": "пн:" + str(н["num"])}]
                     for н in свободные[:12]]
@@ -2050,7 +2069,7 @@ def обработать_кнопку(вызов):
                 "INSERT INTO штампы VALUES (?,?,?,?) "
                 "ON CONFLICT(человек, неделя) DO UPDATE SET уровень=excluded.уровень",
                 (человек, int(номер), уровень,
-                 datetime.now().isoformat(timespec="seconds")),
+                 сейчас_мск().isoformat(timespec="seconds")),
             )
         запрос("answerCallbackQuery", callback_query_id=вызов["id"],
                text="Поправила: теперь " + уровень, show_alert=True)
