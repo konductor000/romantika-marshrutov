@@ -127,9 +127,10 @@ h1{font-size:40px;line-height:1.08;letter-spacing:-.01em}
 .полоса i.сейчас{background:var(--акцент);opacity:.55}
 
 /* ── сегодня ── */
+.раздел-день{margin-top:34px}
 .сегодня{
   background:var(--тёплый);border-left:3px solid var(--акцент);
-  padding:20px 22px;margin:30px 0 10px;border-radius:0 8px 8px 0;
+  padding:20px 22px;border-radius:0 8px 8px 0;
 }
 .сегодня .дата{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -261,7 +262,10 @@ footer a{color:var(--тихий)}
   <div class="полоса" id="полоса"></div>
 </header>
 
-<div class="сегодня" id="сегодня"></div>
+<section class="раздел-день">
+  <h2>Предсказание на день</h2>
+  <div class="сегодня" id="сегодня"></div>
+</section>
 
 <section>
   <h2>Что это</h2>
@@ -398,7 +402,7 @@ document.getElementById("полоса").innerHTML =
   части.push('<div class="дата">Сегодня, '+сегодня.getDate()+" "
              +МЕСЯЦЫ[сегодня.getMonth()]+"</div>");
   if((СЕЗОН.daily||{}).kind==="tzolkin"){
-    части.push('<div class="ярлык">Какой сегодня день по календарю майя</div>');
+    части.push('<div class="ярлык">По календарю майя</div>');
     части.push('<div class="знак">'+ц.число+" "+ц.знак[0]
                +' <small>· '+ц.знак[1]+"</small></div>");
     части.push('<div class="смысл">'+ц.знак[2]+"</div>");
