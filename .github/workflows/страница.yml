@@ -1,0 +1,40 @@
+# Каждый понедельник пересобирает публичную страницу сезона, чтобы на ней
+# открылась очередная неделя. Будущие недели в файл не выгружаются, поэтому
+# без пересборки страница осталась бы на прошлой неделе.
+#
+# Запускается ещё и вручную: вкладка Actions → «Страница сезона» → Run workflow.
+
+name: Страница сезона
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"        # понедельник, 03:00 UTC = 06:00 по Москве
+  workflow_dispatch:            # кнопка «запустить сейчас»
+  push:
+    paths:
+      - "бот/сезон.json"        # поправила задания — страница обновится сразу
+      - "сайт.py"
+
+permissions:
+  contents: write
+
+jobs:
+  собрать:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Пересобрать страницу
+        run: python3 сайт.py
+
+      - name: Отправить, если что-то изменилось
+        run: |
+          if git diff --quiet -- docs/; then
+            echo "Страница не изменилась — публиковать нечего."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          git commit -m "Страница сезона: открылась очередная неделя"
+          git push
