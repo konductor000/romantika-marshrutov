@@ -43,10 +43,9 @@ h1{font-size:40px;line-height:1.08;letter-spacing:-.01em}
 .полоса i.сейчас{background:var(--акцент);opacity:.55}
 
 /* ── сегодня ── */
-.раздел-день{margin-top:34px}
 .сегодня{
   background:var(--тёплый);border-left:3px solid var(--акцент);
-  padding:20px 22px;border-radius:0 8px 8px 0;
+  padding:20px 22px;margin:32px 0 10px;border-radius:0 8px 8px 0;
 }
 .сегодня .дата{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -55,8 +54,9 @@ h1{font-size:40px;line-height:1.08;letter-spacing:-.01em}
 }
 .ярлык{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-  font-size:13px;color:var(--тихий);margin-bottom:8px;
+  font-size:15px;font-weight:600;color:var(--текст);margin-bottom:2px;
 }
+.ярлык span{font-weight:400;color:var(--бледный)}
 .знак{font-size:27px;line-height:1.2;color:var(--акцент)}
 .оговорка{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -178,10 +178,7 @@ footer a{color:var(--тихий)}
   <div class="полоса" id="полоса"></div>
 </header>
 
-<section class="раздел-день">
-  <h2>Предсказание на день</h2>
-  <div class="сегодня" id="сегодня"></div>
-</section>
+<div class="сегодня" id="сегодня"></div>
 
 <section>
   <h2>Что это</h2>
@@ -318,7 +315,8 @@ document.getElementById("полоса").innerHTML =
   части.push('<div class="дата">Сегодня, '+сегодня.getDate()+" "
              +МЕСЯЦЫ[сегодня.getMonth()]+"</div>");
   if((СЕЗОН.daily||{}).kind==="tzolkin"){
-    части.push('<div class="ярлык">По календарю майя</div>');
+    части.push('<div class="ярлык">Предсказание на день '
+               +"<span>· по календарю майя</span></div>");
     части.push('<div class="знак">'+ц.число+" "+ц.знак[0]
                +' <small>· '+ц.знак[1]+"</small></div>");
     части.push('<div class="смысл">'+ц.знак[2]+"</div>");
