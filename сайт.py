@@ -223,7 +223,6 @@ a.кнопка{
 }
 a.главная{background:var(--акцент);color:#fff}
 a.вторая{background:transparent;color:var(--акцент);border:1px solid var(--акцент)}
-.в-телеграме .главная{display:none}
 footer{
   margin-top:52px;padding-top:22px;border-top:1px solid var(--линия);
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -311,6 +310,16 @@ const СЕЗОН = /*ДАННЫЕ*/;
     if(tg.setHeaderColor) tg.setHeaderColor("#fdfaf5");
     if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
     document.documentElement.classList.add("в-телеграме");
+
+    // Обычная ссылка внутри мини-аппа может увести во внешний браузер.
+    // openTelegramLink открывает чат с ботом прямо в Телеграме.
+    document.querySelectorAll('a[href^="https://t.me/"]').forEach(function(a){
+      a.addEventListener("click", function(е){
+        if(!tg.openTelegramLink) return;
+        е.preventDefault();
+        tg.openTelegramLink(a.getAttribute("href"));
+      });
+    });
   }catch(e){}
 })(25);
 
