@@ -136,7 +136,17 @@ h1{font-size:40px;line-height:1.08;letter-spacing:-.01em}
   font-size:12px;letter-spacing:.1em;text-transform:uppercase;
   color:var(--бледный);margin-bottom:10px;
 }
+.ярлык{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:13px;color:var(--тихий);margin-bottom:8px;
+}
 .знак{font-size:27px;line-height:1.2;color:var(--акцент)}
+.свой-день{
+  display:inline-block;margin-top:12px;color:var(--акцент);
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:14px;text-decoration:none;border-bottom:1px solid #e0c3b6;
+  padding-bottom:1px;
+}
 .знак small{font-size:16px;color:var(--тихий)}
 .смысл{font-style:italic;color:var(--тихий);margin-top:6px;font-size:16px}
 .сегодня .слово{margin-top:16px;padding-top:14px;border-top:1px solid #ecdcd2}
@@ -381,12 +391,15 @@ document.getElementById("полоса").innerHTML =
 /* ── блок «сегодня» ── */
 (function(){
   const ц=цолькин(сегодня), части=[];
-  части.push('<div class="дата">'+сегодня.getDate()+" "
+  части.push('<div class="дата">Сегодня, '+сегодня.getDate()+" "
              +МЕСЯЦЫ[сегодня.getMonth()]+"</div>");
   if((СЕЗОН.daily||{}).kind==="tzolkin"){
+    части.push('<div class="ярлык">Какой сегодня день по календарю майя</div>');
     части.push('<div class="знак">'+ц.число+" "+ц.знак[0]
                +' <small>· '+ц.знак[1]+"</small></div>");
     части.push('<div class="смысл">'+ц.знак[2]+"</div>");
+    части.push('<a class="свой-день" href="{{КАЛЕНДАРЬ}}">'
+               +"А какой день у тебя? →</a>");
   }
   if(идёт&&идёт.word){
     части.push('<div class="слово">Слово недели: <b>'+текст(идёт.word)+"</b>"
