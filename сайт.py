@@ -117,6 +117,7 @@ header{padding:44px 0 30px;border-bottom:2px solid var(--акцент)}
   color:var(--акцент);margin-bottom:14px;
 }
 h1{font-size:40px;line-height:1.08;letter-spacing:-.01em}
+.суть{font-size:19px;line-height:1.5;color:var(--тихий);margin-top:18px}
 .период{
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   font-size:14px;color:var(--тихий);margin-top:12px;
@@ -223,14 +224,14 @@ p{margin:0 0 16px}
 .дальше span{font-size:15px}
 
 /* ── ачивки ── */
-.ачивки{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px}
+.ачивки{border-top:1px solid var(--линия)}
 .ачивка{
-  background:var(--карточка);border:1px solid var(--линия);
-  border-radius:10px;padding:14px;
+  display:flex;gap:12px;align-items:baseline;
+  padding:11px 0;border-bottom:1px solid var(--линия);
 }
-.ачивка .знак2{font-size:22px;line-height:1}
-.ачивка .имя{margin-top:7px;font-size:16px}
-.ачивка .за{color:var(--тихий);font-size:14px;margin-top:3px;line-height:1.4}
+.ачивка .знак2{flex:0 0 22px;font-size:17px;line-height:1.4}
+.ачивка .имя{flex:0 0 116px;font-size:16px}
+.ачивка .за{flex:1;color:var(--тихий);font-size:15px}
 
 /* ── кнопки ── */
 .кнопки{margin-top:30px;display:flex;flex-direction:column;gap:10px}
@@ -261,6 +262,8 @@ footer a{color:var(--тихий)}
 <header>
   <div class="клуб">Романтика маршрутов</div>
   <h1>Сезон первый:<br>{{СЕЗОН}}</h1>
+  <div class="суть">Клуб, где раз в три месяца выпадает новая страна —
+  и мы проживаем её по неделям.</div>
   <div class="период">{{ПЕРИОД}}</div>
   <div class="полоса" id="полоса"></div>
 </header>
@@ -269,11 +272,10 @@ footer a{color:var(--тихий)}
 
 <section>
   <h2>Что это</h2>
-  <p class="крупно">Раз в три месяца рандомайзер выбирает страну, и мы проживаем
-  её по неделям. Не читаем про неё — делаем: готовим, рисуем, смотрим,
+  <p class="крупно">Не читаем про страну — делаем: готовим, рисуем, смотрим,
   ходим ногами, пробуем говорить.</p>
   <p>Никто не эксперт и не собирается им становиться. Смысл в том, чтобы
-  двенадцать недель подряд пробовать незнакомое — и посмотреть, что из этого
+  двенадцать недель подряд пробовать незнакомое — и посмотреть, что
   останется с тобой.</p>
 </section>
 
@@ -305,8 +307,9 @@ footer a{color:var(--тихий)}
 
 <footer>
   Счёт дней настоящий: цолькин ведут непрерывно больше двух тысяч лет,
-  и в Гватемале ведут до сих пор. Толкования знаков традиционные.
-  <a href="{{КАЛЕНДАРЬ}}">Посмотреть свой день рождения</a>.
+  и в Гватемале ведут до сих пор — он не совпадает с христианским
+  календарём и никогда не совпадал. А вот расшифровку предназначений
+  дописали уже в наше время: это для интереса, а не всерьёз.
 </footer>
 
 </div>
@@ -409,15 +412,6 @@ document.getElementById("полоса").innerHTML =
     части.push('<div class="смысл">'+ц.знак[2]+"</div>");
     части.push('<a class="свой-день" href="{{КАЛЕНДАРЬ}}">'
                +"Узнать свой день и предназначение →</a>");
-    части.push('<div class="оговорка">Дни и знаки настоящие, а расшифровку '
-               +"предназначений дописали уже в наше время — это для интереса, "
-               +"а не всерьёз.</div>");
-  }
-  if(идёт&&идёт.word){
-    части.push('<div class="слово">Слово недели: <b>'+текст(идёт.word)+"</b>"
-      +(идёт.word_ru?" · "+текст(идёт.word_ru):"")
-      +(идёт.word_meaning?'<div class="смысл">'+текст(идёт.word_meaning)
-                          +"</div>":"")+"</div>");
   }
   document.getElementById("сегодня").innerHTML=части.join("");
 })();
