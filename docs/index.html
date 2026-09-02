@@ -57,6 +57,10 @@ h1{font-size:40px;line-height:1.08;letter-spacing:-.01em}
   font-size:13px;color:var(--тихий);margin-bottom:8px;
 }
 .знак{font-size:27px;line-height:1.2;color:var(--акцент)}
+.оговорка{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:12.5px;line-height:1.45;color:var(--бледный);margin-top:7px;
+}
 .свой-день{
   display:inline-block;margin-top:12px;color:var(--акцент);
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -315,7 +319,10 @@ document.getElementById("полоса").innerHTML =
                +' <small>· '+ц.знак[1]+"</small></div>");
     части.push('<div class="смысл">'+ц.знак[2]+"</div>");
     части.push('<a class="свой-день" href="https://t.me/romantika_marshrutov_bot/calendar">'
-               +"А какой день у тебя? →</a>");
+               +"Узнать свой день и предназначение →</a>");
+    части.push('<div class="оговорка">Дни и знаки настоящие, а расшифровку '
+               +"предназначений дописали уже в наше время — это для интереса, "
+               +"а не всерьёз.</div>");
   }
   if(идёт&&идёт.word){
     части.push('<div class="слово">Слово недели: <b>'+текст(идёт.word)+"</b>"
