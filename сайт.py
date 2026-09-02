@@ -10,6 +10,7 @@
 нужно прогнать этот скрипт заново и запушить.
 """
 
+import datetime
 import io
 import json
 import os
@@ -37,19 +38,29 @@ def собрать():
     with io.open(СЕЗОН_ФАЙЛ, encoding="utf-8") as ф:
         сезон = json.load(ф)
 
+    # В файл попадают только те недели, которые уже начались. Будущие
+    # не прячутся вёрсткой, а вообще не выгружаются: иначе их названия
+    # читались бы через «просмотр кода страницы». Недели ещё могут
+    # переставляться и переименовываться — публичная страница не должна
+    # обещать того, что не объявлено в канале.
+    сегодня = datetime.date.today().isoformat()
+    начавшиеся = [н for н in сезон["weeks"] if н["start"] <= сегодня]
+
     данные = {
         "season": сезон["season"],
         "start": сезон["start"],
         "end": сезон["end"],
         "daily": сезон.get("daily") or {},
+        "всего_недель": len(сезон["weeks"]),
         "weeks": [
             {к: н.get(к, "") for к in
              ("num", "title", "start", "end", "intro",
               "minimum", "maximum", "word", "word_ru", "word_meaning")}
-            for н in сезон["weeks"]
+            for н in начавшиеся
         ],
         "achievements": сезон.get("achievements", []),
     }
+    впереди = len(сезон["weeks"]) - len(начавшиеся)
 
     страница = ШАБЛОН.replace("/*ДАННЫЕ*/", json.dumps(данные, ensure_ascii=False))
     страница = страница.replace("{{СЕЗОН}}", escape(сезон["season"]))
@@ -63,8 +74,12 @@ def собрать():
     with io.open(ВЫХОД, "w", encoding="utf-8") as ф:
         ф.write(страница)
     print("Готово:", ВЫХОД)
-    print("Недель:", len(данные["weeks"]),
+    print("Недель на странице:", len(данные["weeks"]),
+          "· скрыто впереди:", впереди,
           "· ачивок:", len(данные["achievements"]))
+    if впереди:
+        print("Пересобрать в следующий понедельник, чтобы открылась "
+              "очередная неделя.")
 
 
 ШАБЛОН = r"""<!doctype html>
@@ -180,10 +195,13 @@ p{margin:0 0 16px}
   font-size:15px;color:var(--тихий);
 }
 .словцо b{color:var(--акцент);font-weight:normal;font-size:17px}
-.впереди{
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-  font-size:12px;color:var(--бледный);margin-top:12px;
+.дальше{
+  border:1px dashed var(--линия);border-radius:10px;
+  padding:22px 20px;text-align:center;color:var(--тихий);
 }
+.дальше b{display:block;font-size:19px;color:var(--текст);
+  margin-bottom:6px;font-weight:normal}
+.дальше span{font-size:15px}
 
 /* ── ачивки ── */
 .ачивки{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px}
@@ -252,7 +270,7 @@ footer a{color:var(--тихий)}
 </section>
 
 <section>
-  <h2>Двенадцать недель</h2>
+  <h2>Как идёт сезон</h2>
   <div id="недели"></div>
 </section>
 
@@ -320,14 +338,17 @@ const текст=с=>{const у=document.createElement("div");у.textContent=с;
                 return у.innerHTML;};
 
 const сегодня=new Date(); сегодня.setHours(0,0,0,0);
+const ВСЕГО=СЕЗОН.всего_недель||СЕЗОН.weeks.length;
 const недели=СЕЗОН.weeks.map(н=>({...н, от:дата(н.start), до:дата(н.end)}));
 const идёт=недели.find(н=>н.от<=сегодня&&сегодня<=н.до);
 
 /* ── полоса сезона ── */
-document.getElementById("полоса").innerHTML = недели.map(н=>{
-  const к = н.до<сегодня ? "было" : (н===идёт ? "сейчас" : "");
-  return '<i class="'+к+'"></i>';
-}).join("");
+document.getElementById("полоса").innerHTML =
+  Array.from({length:ВСЕГО}, (_,i)=>{
+    const н = недели[i];
+    const к = !н ? "" : (н.до<сегодня ? "было" : (н===идёт ? "сейчас" : ""));
+    return '<i class="'+к+'"></i>';
+  }).join("");
 
 /* ── блок «сегодня» ── */
 (function(){
@@ -348,9 +369,21 @@ document.getElementById("полоса").innerHTML = недели.map(н=>{
   document.getElementById("сегодня").innerHTML=части.join("");
 })();
 
-/* ── двенадцать недель ── */
-document.getElementById("недели").innerHTML = недели.map(н=>{
-  const впереди = н.от>сегодня, прошла = н.до<сегодня;
+/* ── недели ── */
+/* Показываем только те, что уже начались: их задания объявлены в канале.
+   Будущие не раскрываем совсем — ни названий, ни дат. Недели могут
+   переставляться и переименовываться, и публичная страница не должна
+   связывать этим руки. */
+function склонение(н){
+  if(н%100>=11&&н%100<=14) return "недель";
+  return ({1:"неделя",2:"недели",3:"недели",4:"недели"})[н%10]||"недель";
+}
+
+const начавшиеся = недели.filter(н => н.от <= сегодня);
+const впереди = ВСЕГО - начавшиеся.length;
+
+document.getElementById("недели").innerHTML = начавшиеся.map(н=>{
+  const прошла = н.до < сегодня;
   const к = ["неделя", н===идёт?"идёт":"", прошла?"прошла":""].join(" ");
   let ч = '<div class="'+к+'">'
     + '<div class="шапочка"><div class="номер">'
@@ -358,23 +391,22 @@ document.getElementById("недели").innerHTML = недели.map(н=>{
     + '<div class="когда">'+порусски(н.start)+" — "+порусски(н.end)+"</div></div>"
     + '<h3 class="название">'+текст(н.title)+"</h3>";
   if(н.intro) ч += '<div class="вступление">'+текст(н.intro)+"</div>";
-  /* задание целиком — только у начавшихся недель: то, что впереди,
-     открывается по понедельникам, и в боте, и здесь */
-  if(!впереди && (н.minimum||н.maximum)){
+  if(н.minimum||н.maximum){
     ч += '<div class="задания">';
     if(н.minimum) ч+='<div class="задание"><b>Минимум</b>'+текст(н.minimum)+"</div>";
     if(н.maximum) ч+='<div class="задание"><b>Максимум</b>'+текст(н.maximum)+"</div>";
     ч += "</div>";
-  } else if(впереди){
-    ч += '<div class="впереди">Задание откроется в понедельник</div>';
   }
-  if(!впереди && н.word){
+  if(н.word){
     ч += '<div class="словцо">Слово недели: <b>'+текст(н.word)+"</b>"
        + (н.word_ru?" · "+текст(н.word_ru):"")
        + (н.word_meaning?" — "+текст(н.word_meaning):"")+"</div>";
   }
   return ч+"</div>";
-}).join("");
+}).join("") + (впереди
+  ? '<div class="дальше"><b>Впереди ещё '+впереди+" "+склонение(впереди)+"</b>"
+    + "<span>Каждая открывается в понедельник. До этого дня её не знает никто.</span></div>"
+  : "");
 
 /* ── ачивки ── */
 document.getElementById("ачивки").innerHTML =
