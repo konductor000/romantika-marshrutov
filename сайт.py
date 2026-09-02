@@ -92,6 +92,7 @@ def собрать():
 <meta property="og:title" content="Романтика маршрутов · {{СЕЗОН}}">
 <meta property="og:description" content="Раз в три месяца выпадает новая страна, и мы проживаем её по неделям. Не читаем — делаем.">
 <meta property="og:type" content="website">
+<script async src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
 :root{
   --фон:#fdfaf5; --текст:#2b2320; --акцент:#b4472f; --тихий:#7a6a60;
@@ -222,6 +223,7 @@ a.кнопка{
 }
 a.главная{background:var(--акцент);color:#fff}
 a.вторая{background:transparent;color:var(--акцент);border:1px solid var(--акцент)}
+.в-телеграме .главная{display:none}
 footer{
   margin-top:52px;padding-top:22px;border-top:1px solid var(--линия);
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -294,6 +296,23 @@ footer a{color:var(--тихий)}
 
 <script>
 const СЕЗОН = /*ДАННЫЕ*/;
+
+/* ── если открыли внутри Телеграма ──
+   Без этого страница показывается наполовину экрана и её надо тянуть
+   пальцем. Скрипт телеграма грузится асинхронно и может не загрузиться
+   вовсе — тогда всё работает как обычная веб-страница. */
+(function развернуть(попыток){
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if(!tg){ if(попыток) setTimeout(()=>развернуть(попыток-1), 120); return; }
+  try{
+    tg.ready();
+    tg.expand();
+    if(tg.setBackgroundColor) tg.setBackgroundColor("#fdfaf5");
+    if(tg.setHeaderColor) tg.setHeaderColor("#fdfaf5");
+    if(tg.disableVerticalSwipes) tg.disableVerticalSwipes();
+    document.documentElement.classList.add("в-телеграме");
+  }catch(e){}
+})(25);
 
 /* ── цолькин: та же корреляция GMT-584283, что в боте и в календаре ── */
 const ЗНАКИ = [
