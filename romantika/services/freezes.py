@@ -1,0 +1,90 @@
+"""Earned freezes (DOMAIN §3).
+
+Only the earned ones are rows: the base freezes are a season constant and spending is
+recomputed on every view by `rules.season_breakdown`, never stored.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from romantika.db import models
+from romantika.domain import rules
+from romantika.services import content
+
+#: Reasons the bot grants by itself, once per season and participant (DOMAIN §3).
+AUTO_REASONS: frozenset[models.FreezeReason] = frozenset({models.FreezeReason.WORD, models.FreezeReason.MAX})
+
+
+async def grant(
+    session: AsyncSession,
+    *,
+    season_id: int,
+    user_id: int,
+    reason: models.FreezeReason,
+    granted_by: int | None,
+    now: datetime,
+    note: str | None = None,
+) -> bool:
+    """Give one freeze; False when the ceiling is reached or an automatic reason repeats."""
+    season = await content.require_season(session, season_id)
+    bonus = await bonus_count(session, season_id, user_id)
+    if season.base_freezes + bonus >= season.max_freezes:
+        return False
+    if reason in AUTO_REASONS and await _has_reason(session, season_id=season_id, user_id=user_id, reason=reason):
+        return False
+
+    session.add(
+        models.Freeze(
+            season_id=season_id,
+            user_id=user_id,
+            reason=reason.value,
+            granted_by=granted_by,
+            note=note,
+            created_at=now,
+        )
+    )
+    await session.flush()
+    return True
+
+
+async def _has_reason(session: AsyncSession, *, season_id: int, user_id: int, reason: models.FreezeReason) -> bool:
+    query = select(models.Freeze.id).where(
+        models.Freeze.season_id == season_id,
+        models.Freeze.user_id == user_id,
+        models.Freeze.reason == reason.value,
+    )
+    return (await session.execute(query.limit(1))).first() is not None
+
+
+async def bonus_count(session: AsyncSession, season_id: int, user_id: int) -> int:
+    """How many freezes this participant earned on top of the season's base freezes."""
+    query = (
+        select(func.count())
+        .select_from(models.Freeze)
+        .where(models.Freeze.season_id == season_id, models.Freeze.user_id == user_id)
+    )
+    return int((await session.execute(query)).scalar_one())
+
+
+async def bonus_counts(session: AsyncSession, season_id: int) -> dict[int, int]:
+    """`{user_id: earned}` for the whole season, in one query."""
+    query = (
+        select(models.Freeze.user_id, func.count())
+        .where(models.Freeze.season_id == season_id)
+        .group_by(models.Freeze.user_id)
+    )
+    return {user_id: int(count) for user_id, count in (await session.execute(query)).all()}
+
+
+async def total(session: AsyncSession, season_id: int, user_id: int) -> int:
+    """Base plus earned, capped by the season ceiling (`rules.total_freezes`)."""
+    season = await content.require_season(session, season_id)
+    return rules.total_freezes(
+        bonus_freezes=await bonus_count(session, season_id, user_id),
+        base_freezes=season.base_freezes,
+        max_freezes=season.max_freezes,
+    )

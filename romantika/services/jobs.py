@@ -1,0 +1,101 @@
+"""The job queue the worker runs on (ARCHITECTURE §6.1).
+
+Claiming uses `FOR UPDATE SKIP LOCKED`, so several workers can share one table without ever
+handing the same job out twice. A failed job comes back with an exponentially growing delay
+and gives up after five attempts, which is where an alert to Mila belongs.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from romantika.db import models
+
+#: First retry after a minute, then 2, 4, 8 — the fifth failure gives up.
+BACKOFF = timedelta(minutes=1)
+MAX_ATTEMPTS = 5
+
+
+@dataclass(frozen=True, slots=True)
+class JobDTO:
+    id: int
+    kind: str
+    payload: dict[str, Any]
+    attempts: int
+    run_after: datetime
+
+
+def backoff_for(attempts: int) -> timedelta:
+    """Delay before retry number `attempts` (1 → 1 min, 2 → 2 min, 3 → 4 min, ...)."""
+    return BACKOFF * (1 << max(attempts - 1, 0))
+
+
+async def enqueue(
+    session: AsyncSession,
+    kind: str,
+    payload: dict[str, Any],
+    *,
+    now: datetime,
+    run_after: datetime | None = None,
+) -> int:
+    """Put one job on the queue; `run_after` delays it (reminders, retries)."""
+    row = models.Job(
+        kind=kind,
+        payload=payload,
+        status=models.JobStatus.QUEUED.value,
+        run_after=run_after or now,
+        created_at=now,
+    )
+    session.add(row)
+    await session.flush()
+    return row.id
+
+
+async def claim(session: AsyncSession, *, now: datetime) -> JobDTO | None:
+    """Take the oldest job that is due, locking it against the other workers."""
+    query = (
+        select(models.Job)
+        .where(
+            models.Job.status == models.JobStatus.QUEUED.value,
+            models.Job.run_after <= now,
+        )
+        .order_by(models.Job.run_after, models.Job.id)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    row = (await session.execute(query)).scalar_one_or_none()
+    if row is None:
+        return None
+    row.status = models.JobStatus.RUNNING.value
+    row.started_at = now
+    await session.flush()
+    return JobDTO(id=row.id, kind=row.kind, payload=dict(row.payload), attempts=row.attempts, run_after=row.run_after)
+
+
+async def finish(session: AsyncSession, job_id: int, *, error: str | None, now: datetime) -> models.JobStatus:
+    """Close a claimed job: done, or queued again with a backoff, or failed for good."""
+    row = await session.get(models.Job, job_id)
+    if row is None:
+        raise LookupError(f"job {job_id} does not exist")
+
+    if error is None:
+        row.status = models.JobStatus.DONE.value
+        row.finished_at = now
+        row.error = None
+    else:
+        row.attempts += 1
+        row.error = error
+        if row.attempts >= MAX_ATTEMPTS:
+            row.status = models.JobStatus.FAILED.value
+            row.finished_at = now
+        else:
+            row.status = models.JobStatus.QUEUED.value
+            row.run_after = now + backoff_for(row.attempts)
+            row.finished_at = None
+    await session.flush()
+    return models.JobStatus(row.status)
