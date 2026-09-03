@@ -81,7 +81,11 @@ romantika/                 package (installed, `romantika` on sys.path)
   pdf/                     journal HTML template + WeasyPrint renderer `render_journal_pdf()`
   migration/               legacy_import.py: legacy SQLite + file_id download -> Postgres/media
 data/
-  tzolkin.json             single source of truth for 20 signs + 13 tones (+ daily phrase)
+  tzolkin.json             single source of truth: {"correlation": 584283,
+                           "signs": [20 × {name (simple spelling «Ик»), name_academic («Ик'»),
+                           latin, emoji, symbol, meaning, destiny, short, day_advice}],
+                           "tones": [13 × {number, name, text}]} — merged from legacy bot
+                           (ЗНАКИ_ЦОЛЬКИНА: symbol/day_advice) and Mini App (SIGNS/TONES)
   seasons/mexico-2026.json season content seed (legacy сезон.json, same keys)
 docker/                    Dockerfile (one image, 3 commands), compose.yml, compose.vps.yml
 scripts/                   backup.sh, restore-verify.sh, mac-pull-backups.sh, deploy.sh, ...
