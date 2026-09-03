@@ -286,6 +286,38 @@ destination: Path)`, later stages add `send_message(chat_id, text)` and
   from `https://telegram.org/js/telegram-web-app.js`; `tg.expand()`; works in a plain browser
   in dev with the dev bypass.
 
+### 8.1 Web API details (binding; mirrors `tests/acceptance/test_stage4_web.py`)
+
+- `romantika.web.app.create_app(settings, session_factory, media_store, *, clock=None) -> FastAPI`.
+- `romantika.web.auth`: `build_init_data(bot_token, user: dict, *, auth_date: int) -> str`
+  (query-string form Telegram sends, with `hash`), `validate_init_data(init_data, bot_token,
+  *, now) -> InitDataUser | None` (HMAC per Telegram docs; `auth_date` older than 24 h →
+  None), dependency `current_user` (401 without/invalid header, upserts the user),
+  `admin_user` (403 for non-admins).
+- JSON shapes: `/api/me` → `{id, first_name, username, is_admin}`; `/api/journal` →
+  `{season: {slug,title,starts_on,ends_on}, passport: {stamps, stamps_max, freezes_used,
+  freezes_left, freezes_total, best_streak, current_streak, level}, weeks: [{number, title,
+  state, level, starts_on, ends_on, task_min, task_max, word}], reports: [{id, week_number,
+  kind, text, created_at, media: [{id, url, mime}]}], achievements: [label], words: [{word,
+  meaning}], facts: [text], wish}`; future weeks are present only as `state: "locked"`
+  without task texts. `/api/journal/pdf` POST → 202 `{job_id, status}`; GET
+  `/api/journal/pdf/{job_id}` → `{status, url?}` (403 for other users' jobs).
+  `/media/{media_id}` → file bytes with the stored mime, `Cache-Control: private, max-age=3600`;
+  401 anonymous, 403 not owner/admin, 404 unknown or hidden.
+- Admin API: `GET /api/admin/weeks` (all weeks of the active season), `PUT /api/admin/weeks/{id}`
+  body = subset of editable fields (422 for anything else), `GET /api/admin/participants`
+  (`[{id, first_name, username, joined_at, stamps, level}]`), `GET
+  /api/admin/participants/{id}` (`{user, passport, achievements, wish, reports}`), `PUT
+  /api/admin/participants/{id}/stamps/{week_number}` body `{level: "min"|"max"|null}` → 200
+  `{level}`, `POST .../freezes` body `{reason, note?}` → 201, `POST .../achievements` body
+  `{code_or_text}` → 201 `{code, label, created}`, `PUT .../wish` body `{text}` → 200,
+  `GET /api/admin/summary?week=N` → WeekSummary JSON with `submitted: [{user_id, level}]`,
+  `GET/POST /api/admin/facts`, `DELETE /api/admin/facts/{id}` → 204, `GET /api/admin/audit`.
+- Pages: `/` public season page (SSR, no participant data, future weeks absent from HTML),
+  `/calendar` (tzolkin Mini App, signs embedded from data/tzolkin.json), `/app/journal`,
+  `/app/admin` (HTML shells + vanilla JS from `/static/...` that sends `X-Telegram-Init-Data`
+  from `window.Telegram.WebApp.initData`).
+
 ## 9. Worker
 
 `python -m romantika.worker` runs forever: (a) job loop — claims one job at a time
