@@ -227,6 +227,42 @@ destination: Path)`, later stages add `send_message(chat_id, text)` and
   `/ачивка`, `/пожелание`, `/факт`, `/факт-`, `/факты`, `/журнал`).
 - Reminders are NOT in the bot process; see worker.
 
+### 7.1 Bot API (binding; mirrors `tests/acceptance/test_stage3_bot.py`)
+
+- `romantika.bot.app.create_dispatcher(settings, session_factory, media_store, *, telegram=None,
+  clock=None) -> aiogram.Dispatcher`. `telegram` is a `TelegramGateway` for media downloads
+  (default `romantika.bot.gateway.AiogramTelegramGateway(bot)` built lazily from the Bot of the
+  update); `clock: Callable[[], datetime]` returns an aware datetime (default `moscow_now()`).
+  The dispatcher must be usable through `dp.feed_update(bot, update)` with any `aiogram.Bot`.
+- Middlewares (outer, on `update`): DB session from `session_factory` (commit on success,
+  rollback on error), user upsert + season membership, settings/clock/media injection via
+  handler kwargs.
+- `romantika.bot.send.split_text(text: str, limit: int = 4096) -> list[str]` splits on
+  paragraph, then line, then space boundaries; never returns an empty piece; every outgoing
+  text passes through it (`safe_send`).
+- `romantika.bot.keyboards.normalize_button(text) -> str` (drops emoji/variation selectors,
+  collapses spaces, lower-cases) and `button_action(text) -> str | None` with actions
+  `task, today, passport, words, facts, more, help, write, admin`.
+- Callback data: `intent:<week_number>:<take|try|skip>`, `level:<week_number>:<min|max>`,
+  `notreport:<report_id>`, `more:<journal|write|help>`, `addword`, `addfact`, `endofseason`,
+  admin `adm:<action>...` (free format, documented in keyboards.py).
+- Commands: participant `/start /help /whoami /task /today /passport /words /facts /journal`
+  (+ Russian aliases `/помощь /журнал /факты`); admin `/results [N] /core /remind /badges
+  /badge /reminders /who /wish /fact <text> /fact- <id>` (+ `/ачивка /ачивки /пожелание
+  /факт /факт-`). Admin = `user.is_admin or id in settings.admin_ids`; non-admins get a polite
+  refusal, never the admin output.
+- Report intake: text → MIN; photo (largest size)/video/video_note/document → MAX; voice/audio
+  → MIN with kind voice/audio; sticker/location/contact/other → reply «не поняла…», nothing
+  stored. After `reports.accept`, media are downloaded inline through the gateway; on failure
+  a `media_download` job is enqueued and the participant still gets the stamp reply.
+- Admin copy: header `sendMessage` to `settings.admin_chat_id` («📨 Отчёт за неделю N от
+  Имя: …») and `copyMessage` of the original; both message ids are stored in `admin_links`.
+  A reply from the admin chat to one of those messages is delivered to the author as
+  «💬 Мила ответила на твой отчёт: …».
+- Out-of-week messages: stored (`week_id=None`), copied to the admin, honest reply.
+- Texts: `romantika/texts/ru.py` — greeting, help (11 legacy FAQ items), admin memo, button
+  labels, report replies; ported from legacy wording.
+
 ## 8. Web (FastAPI)
 
 - `GET /healthz` → `{"status":"ok","db":true}`.
