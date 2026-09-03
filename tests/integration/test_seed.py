@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sqlalchemy import func, select
@@ -96,3 +98,29 @@ async def test_only_one_season_can_be_active(db_session: AsyncSession) -> None:
     )
     with pytest.raises(IntegrityError):
         await db_session.flush()
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda payload: payload.pop("season"), "'season'"),
+        (lambda payload: payload["weeks"][0].pop("title"), "'title'"),
+        (lambda payload: payload["weeks"][0].pop("minimum"), "'minimum'"),
+        (lambda payload: payload["achievements"][0].pop("name"), "'name'"),
+    ],
+)
+async def test_import_refuses_a_file_missing_required_content(
+    db_session: AsyncSession,
+    tmp_path: Path,
+    mutate: Callable[[dict[str, Any]], object],
+    message: str,
+) -> None:
+    import json
+
+    payload = json.loads(SEASON_JSON.read_text(encoding="utf-8"))
+    mutate(payload)
+    broken = tmp_path / "broken-2027.json"
+    broken.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(seed.SeedError, match=message):
+        await seed.import_season(db_session, broken)

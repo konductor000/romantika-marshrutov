@@ -17,6 +17,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     PrimaryKeyConstraint,
@@ -26,7 +27,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID, ExcludeConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from romantika.db.base import Base, Timestamp, TimestampMixin
@@ -163,8 +164,17 @@ class Week(Base, TimestampMixin):
     __tablename__ = "weeks"
     __table_args__ = (
         UniqueConstraint("season_id", "number", name="uq_weeks_season_id_number"),
+        # Target of the composite foreign keys that tie a denormalized `season_id` to its week.
+        UniqueConstraint("season_id", "id", name="uq_weeks_season_id_id"),
         CheckConstraint("number >= 1", name="number"),
         CheckConstraint("ends_on >= starts_on", name="dates"),
+        # Weeks of one season may not overlap: `calendar.week_for` must find at most one.
+        ExcludeConstraint(
+            ("season_id", "="),
+            (text("daterange(starts_on, ends_on, '[]')"), "&&"),
+            name="weeks_no_overlap",
+            using="gist",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -231,6 +241,10 @@ class Report(Base, TimestampMixin):
 
     __tablename__ = "reports"
     __table_args__ = (
+        # The denormalized season must be the season the week belongs to.
+        ForeignKeyConstraint(
+            ["season_id", "week_id"], ["weeks.season_id", "weeks.id"], name="fk_reports_season_id_week_id_weeks"
+        ),
         enum_check("kind", ReportKind, "kind"),
         enum_check("level", StampLevel, "level"),
     )
@@ -238,7 +252,7 @@ class Report(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    week_id: Mapped[int | None] = mapped_column(ForeignKey("weeks.id"), index=True)
+    week_id: Mapped[int | None] = mapped_column(Integer, index=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     text: Mapped[str | None] = mapped_column(Text)
     level: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -272,6 +286,10 @@ class Stamp(Base, TimestampMixin):
     __tablename__ = "stamps"
     __table_args__ = (
         UniqueConstraint("user_id", "week_id", name="uq_stamps_user_id_week_id"),
+        # The denormalized season must be the season the week belongs to.
+        ForeignKeyConstraint(
+            ["season_id", "week_id"], ["weeks.season_id", "weeks.id"], name="fk_stamps_season_id_week_id_weeks"
+        ),
         enum_check("level", StampLevel, "level"),
         enum_check("source", StampSource, "source"),
     )
@@ -279,7 +297,7 @@ class Stamp(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id"), nullable=False, index=True)
+    week_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     level: Mapped[str] = mapped_column(String(8), nullable=False)
     week_title_snapshot: Mapped[str] = mapped_column(String(255), nullable=False, server_default="")
     awarded_at: Mapped[datetime] = mapped_column(Timestamp, server_default=func.now(), nullable=False)

@@ -31,13 +31,27 @@ class SeedResult:
     achievement_types_created: int
 
 
-def _as_date(value: str) -> date:
-    return date.fromisoformat(value)
+class SeedError(ValueError):
+    """A season file is missing a key without which the content makes no sense."""
+
+
+def _as_date(payload: dict[str, Any], key: str, where: str) -> date:
+    return date.fromisoformat(_required(payload, key, where))
 
 
 def _text(payload: dict[str, Any], key: str) -> str:
+    """An optional text field: absent means empty."""
     value = payload.get(key)
     return "" if value is None else str(value)
+
+
+def _required(payload: dict[str, Any], key: str, where: str) -> str:
+    """A field the participants would notice if it were empty."""
+    value = payload.get(key)
+    filled = "" if value is None else str(value).strip()
+    if not filled:
+        raise SeedError(f"{where}: required field '{key}' is missing or empty")
+    return filled
 
 
 async def import_season(session: AsyncSession, path: Path) -> SeedResult:
@@ -52,11 +66,11 @@ async def import_season(session: AsyncSession, path: Path) -> SeedResult:
         season = models.Season(slug=slug, status=models.SeasonStatus.DRAFT.value)
         session.add(season)
 
-    season.title = _text(payload, "season")
-    season.title_accusative = _text(payload, "season_about")
-    season.hashtag = _text(payload, "hashtag")
-    season.starts_on = _as_date(payload["start"])
-    season.ends_on = _as_date(payload["end"])
+    season.title = _required(payload, "season", slug)
+    season.title_accusative = _required(payload, "season_about", slug)
+    season.hashtag = _required(payload, "hashtag", slug)
+    season.starts_on = _as_date(payload, "start", slug)
+    season.ends_on = _as_date(payload, "end", slug)
     season.daily_kind = daily.get("kind")
     season.daily_title = _text(daily, "title")
     season.daily_note = _text(daily, "note")
@@ -84,17 +98,18 @@ async def _import_weeks(session: AsyncSession, season: models.Season, weeks: lis
     }
     created = 0
     for item in weeks:
-        number = int(item["num"])
+        number = int(_required(item, "num", "week"))
+        where = f"week {number}"
         week = existing.get(number)
         if week is None:
             week = models.Week(season_id=season.id, number=number)
             session.add(week)
             created += 1
-        week.title = _text(item, "title")
-        week.starts_on = _as_date(item["start"])
-        week.ends_on = _as_date(item["end"])
+        week.title = _required(item, "title", where)
+        week.starts_on = _as_date(item, "start", where)
+        week.ends_on = _as_date(item, "end", where)
         week.intro = _text(item, "intro")
-        week.task_min = _text(item, "minimum")
+        week.task_min = _required(item, "minimum", where)
         week.task_max = _text(item, "maximum")
         week.word = _text(item, "word")
         week.word_ru = _text(item, "word_ru")
@@ -113,14 +128,14 @@ async def _import_achievement_types(
     }
     created = 0
     for index, item in enumerate(achievements):
-        code = str(item["code"])
+        code = _required(item, "code", "achievement")
         row = existing.get(code)
         if row is None:
             row = models.AchievementType(season_id=season.id, code=code)
             session.add(row)
             created += 1
         row.emoji = _text(item, "emoji")
-        row.name = _text(item, "name")
+        row.name = _required(item, "name", f"achievement '{code}'")
         row.description = _text(item, "for")
         row.sort = int(item.get("index", index))
     return created

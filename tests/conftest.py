@@ -11,10 +11,12 @@ and the outer transaction is still rolled back cleanly at teardown.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
+import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -41,11 +43,46 @@ def run_alembic(url: str, revision: str, *, downgrade: bool = False) -> None:
         command.upgrade(config, revision)
 
 
+def existing_tables(url: str) -> list[str]:
+    """Table names in the target database, read outside the event loop."""
+
+    async def read() -> list[str]:
+        engine = make_engine(url)
+        try:
+            async with engine.connect() as connection:
+                return await connection.run_sync(lambda sync_conn: sa.inspect(sync_conn).get_table_names())
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(read())
+
+
+def check_scratch_database(url: str) -> None:
+    """Refuse to run against a database that is not ours to drop.
+
+    The migration test runs `alembic downgrade base`, which deletes every table and all its
+    rows. That is only acceptable on a scratch database: either one named `..._test` (as
+    documented in `.env.example`) or one whose schema is still empty.
+    """
+    name = url.rsplit("/", 1)[-1].split("?", 1)[0]
+    if name.endswith("_test"):
+        return
+    tables = [table for table in existing_tables(url) if table != "alembic_version"]
+    if tables:
+        pytest.exit(
+            "TEST_DATABASE_URL points at a non-empty database whose name does not end in '_test' "
+            f"({name}: {len(tables)} tables). This suite drops the whole schema; "
+            "point it at a scratch database instead.",
+            returncode=2,
+        )
+
+
 @pytest.fixture(scope="session")
 def database_url() -> Iterator[str]:
     """A migrated, empty Postgres 16 database for the whole test session."""
     url = os.environ.get("TEST_DATABASE_URL")
     if url:
+        check_scratch_database(url)
         run_alembic(url, "head")
         yield url
         return
