@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.db import models
-from romantika.services import content, freezes
+from romantika.services import content, freezes, people
 
 #: The first dash surrounded by spaces, or the first colon, separates word and meaning.
 SEPARATOR = re.compile(r"\s+[—–-]\s+|\s*:\s*")
@@ -82,6 +82,7 @@ async def add(
     word, meaning = parse(raw)
     if not word:
         raise ValueError("a dictionary entry needs a word")
+    await people.ensure_member(session, season_id, user_id, now=now)
 
     first = await _count(session, season_id=season_id, user_id=user_id) == 0
     row = models.Word(

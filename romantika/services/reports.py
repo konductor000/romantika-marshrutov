@@ -18,7 +18,7 @@ from romantika.db import models
 from romantika.domain import rules
 from romantika.domain.calendar import to_moscow
 from romantika.domain.types import ReportKind, StampLevel
-from romantika.services import content, freezes, media, stamps
+from romantika.services import content, freezes, media, people, stamps
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,14 +90,18 @@ async def accept(
     still stored — as a letter to Mila with no week and no stamp (DOMAIN §2, §10.2).
     """
     season = await content.require_season(session, season_id)
+    await people.ensure_member(session, season_id, user_id, now=now)
     week = await content.current_week(session, season_id, today=to_moscow(now).date())
-    level = rules.report_level(message.kind)
+    # Outside a week the message is a letter, not a report: it is stored as `other` at the
+    # minimum level so nothing downstream mistakes it for a week's work (ARCHITECTURE §6).
+    kind = message.kind if week is not None else ReportKind.OTHER
+    level = rules.report_level(kind)
 
     report = models.Report(
         season_id=season_id,
         user_id=user_id,
         week_id=None if week is None else week.id,
-        kind=message.kind.value,
+        kind=kind.value,
         text=message.text,
         level=level.value,
         tg_chat_id=message.tg_chat_id,

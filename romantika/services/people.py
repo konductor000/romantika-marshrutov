@@ -19,6 +19,10 @@ from romantika.db import models
 DIALOG_TTL = timedelta(hours=6)
 
 
+class MembershipMissingError(LookupError):
+    """Asked for a season view of somebody who never joined that season."""
+
+
 @dataclass(frozen=True, slots=True)
 class TelegramUser:
     """What Telegram tells us about the sender of an update."""
@@ -159,6 +163,7 @@ async def set_intent(
     now: datetime,
 ) -> None:
     """«Берусь / Попробую / В этот раз мимо» under the weekly task; one row per week."""
+    await ensure_member(session, season_id, user_id, now=now)
     query = select(models.WeekIntent).where(models.WeekIntent.user_id == user_id, models.WeekIntent.week_id == week_id)
     row = (await session.execute(query)).scalar_one_or_none()
     if row is None:

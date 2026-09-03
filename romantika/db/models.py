@@ -316,7 +316,19 @@ class Freeze(Base, TimestampMixin):
     """An earned bonus freeze; the base freezes of a season are a constant, not rows."""
 
     __tablename__ = "freezes"
-    __table_args__ = (enum_check("reason", FreezeReason, "reason"),)
+    __table_args__ = (
+        enum_check("reason", FreezeReason, "reason"),
+        # `word` and `max` are granted by the bot once per season and participant (DOMAIN §3);
+        # the partial unique index is what makes that true for concurrent workers too.
+        Index(
+            "uq_freezes_auto_reason",
+            "season_id",
+            "user_id",
+            "reason",
+            unique=True,
+            postgresql_where=text("reason IN ('word', 'max')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id"), nullable=False, index=True)

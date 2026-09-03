@@ -18,6 +18,9 @@ from romantika.db import models
 #: `achievements.code` is a `varchar(64)`; a longer free text is stored trimmed.
 CODE_LENGTH = 64
 
+#: `achievements.label` is a `varchar(255)`; a longer free text is trimmed the same way.
+LABEL_LENGTH = 255
+
 
 @dataclass(frozen=True, slots=True)
 class AchievementTypeDTO:
@@ -65,7 +68,9 @@ async def award(
     if known is not None:
         code, label = known.code, catalogue_label(known)
     else:
-        code, label = text[:CODE_LENGTH], text
+        # Both columns are bounded: an over-long free text would abort the whole
+        # transaction in Postgres and lose everything else the admin did in it.
+        code, label = text[:CODE_LENGTH], text[:LABEL_LENGTH]
 
     existing = (
         await session.execute(

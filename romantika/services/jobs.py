@@ -20,6 +20,12 @@ from romantika.db import models
 BACKOFF = timedelta(minutes=1)
 MAX_ATTEMPTS = 5
 
+#: A claimed job whose worker died is nobody's after this: `claim` puts it back in the queue.
+LEASE = timedelta(minutes=15)
+
+#: How many abandoned jobs one `claim` picks up before serving the caller.
+RECLAIM_BATCH = 20
+
 
 @dataclass(frozen=True, slots=True)
 class JobDTO:
@@ -56,8 +62,35 @@ async def enqueue(
     return row.id
 
 
+async def reclaim_abandoned(session: AsyncSession, *, now: datetime) -> int:
+    """Requeue jobs a dead worker left `running`; returns how many were taken back.
+
+    Without this a worker that dies between `claim` and `finish` leaves the row `running`
+    forever: `claim` only looks at `queued`, so the job would never be retried and never
+    reach `failed`, and nobody would ever be told (ARCHITECTURE §6.1).
+    """
+    query = (
+        select(models.Job)
+        .where(
+            models.Job.status == models.JobStatus.RUNNING.value,
+            models.Job.started_at.is_not(None),
+            models.Job.started_at <= now - LEASE,
+        )
+        .order_by(models.Job.started_at, models.Job.id)
+        .limit(RECLAIM_BATCH)
+        .with_for_update(skip_locked=True)
+    )
+    rows = list((await session.execute(query)).scalars())
+    for row in rows:
+        _fail(row, error="lease expired: the worker never finished this job", now=now)
+    if rows:
+        await session.flush()
+    return len(rows)
+
+
 async def claim(session: AsyncSession, *, now: datetime) -> JobDTO | None:
     """Take the oldest job that is due, locking it against the other workers."""
+    await reclaim_abandoned(session, now=now)
     query = (
         select(models.Job)
         .where(
@@ -88,14 +121,19 @@ async def finish(session: AsyncSession, job_id: int, *, error: str | None, now: 
         row.finished_at = now
         row.error = None
     else:
-        row.attempts += 1
-        row.error = error
-        if row.attempts >= MAX_ATTEMPTS:
-            row.status = models.JobStatus.FAILED.value
-            row.finished_at = now
-        else:
-            row.status = models.JobStatus.QUEUED.value
-            row.run_after = now + backoff_for(row.attempts)
-            row.finished_at = None
+        _fail(row, error=error, now=now)
     await session.flush()
     return models.JobStatus(row.status)
+
+
+def _fail(row: models.Job, *, error: str, now: datetime) -> None:
+    """One failed attempt: back to the queue with a growing delay, or given up on."""
+    row.attempts += 1
+    row.error = error
+    if row.attempts >= MAX_ATTEMPTS:
+        row.status = models.JobStatus.FAILED.value
+        row.finished_at = now
+    else:
+        row.status = models.JobStatus.QUEUED.value
+        row.run_after = now + backoff_for(row.attempts)
+        row.finished_at = None

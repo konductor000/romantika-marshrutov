@@ -33,8 +33,11 @@ class JournalWeek:
 
 @dataclass(frozen=True, slots=True)
 class JournalMedia:
+    """A file of a report. `path` only points at a real file once `downloaded` is true."""
+
     media_id: uuid.UUID
     path: str
+    downloaded: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,16 +108,26 @@ async def _quotes(session: AsyncSession, *, season_id: int, user_id: int) -> dic
 
 
 async def _media(session: AsyncSession, *, season_id: int, user_id: int) -> list[JournalMedia]:
-    """Files of reports that were neither cancelled nor hidden."""
+    """Files of week reports that were neither cancelled nor hidden.
+
+    A message sent outside a week is a letter to Mila and not a report (DOMAIN §2), so its
+    files stay out of the season journal. `downloaded` says whether the file is already on
+    our disk: the row is created by `reports.accept` and filled in by `MediaStore.download`,
+    so the PDF must skip a path that is still only a promise.
+    """
     query = (
-        select(models.Media.id, models.Media.path)
+        select(models.Media.id, models.Media.path, models.Media.downloaded_at)
         .join(models.Report, models.Report.id == models.Media.report_id)
         .where(
             models.Report.season_id == season_id,
             models.Report.user_id == user_id,
+            models.Report.week_id.is_not(None),
             models.Report.deleted_at.is_(None),
             models.Media.hidden_at.is_(None),
         )
         .order_by(models.Media.created_at, models.Media.id)
     )
-    return [JournalMedia(media_id=media_id, path=path) for media_id, path in (await session.execute(query)).all()]
+    return [
+        JournalMedia(media_id=media_id, path=path, downloaded=downloaded_at is not None)
+        for media_id, path, downloaded_at in (await session.execute(query)).all()
+    ]

@@ -23,6 +23,9 @@ from romantika.services import (
     facts,
     freezes,
     jobs,
+    journal,
+    media,
+    passport,
     people,
     reports,
     seed,
@@ -49,10 +52,13 @@ def moscow(year: int, month: int, day: int, hour: int = 12) -> datetime:
 @dataclass
 class FakeTelegram:
     payload: bytes = b"fake-jpeg-bytes"
+    #: What `getFile` claims the size is; `None` means «as many bytes as we serve».
+    announced_size: int | None = None
     calls: list[str] = field(default_factory=list)
 
     async def get_file(self, file_id: str) -> TelegramFile:
-        return TelegramFile(file_path=f"photos/{file_id}.jpg", file_size=len(self.payload))
+        size = len(self.payload) if self.announced_size is None else self.announced_size
+        return TelegramFile(file_path=f"photos/{file_id}.jpg", file_size=size)
 
     async def download_file(self, file_path: str, destination: Path) -> None:
         self.calls.append(file_path)
@@ -331,3 +337,155 @@ async def _week(session: AsyncSession, season_id: int, number: int) -> content.W
     week = await content.week_by_number(session, season_id, number)
     assert week is not None
     return week
+
+
+# --- provenance, membership and letters -------------------------------------------
+
+
+async def test_a_report_takes_over_a_stamp_it_upgrades(db_session: AsyncSession, season: int) -> None:
+    """Mila's ✅ plus a photo is a ⭐ that came from the report — and cancel may undo it."""
+    await stamps.admin_set(
+        db_session,
+        actor_id=ADMIN_ID,
+        season_id=season,
+        user_id=ALICE,
+        week_number=1,
+        level=StampLevel.MIN,
+        now=moscow(2026, 9, 1),
+    )
+    accepted = await reports.accept(
+        db_session, season_id=season, user_id=ALICE, message=photo(), now=moscow(2026, 9, 2)
+    )
+    assert accepted.stamp_level is StampLevel.MAX
+    week = await _week(db_session, season, 1)
+    row = (
+        await db_session.execute(
+            select(models.Stamp).where(models.Stamp.user_id == ALICE, models.Stamp.week_id == week.id)
+        )
+    ).scalar_one()
+    assert row.source == models.StampSource.REPORT.value, "a report upgrade is not attributed to Mila"
+    assert await _audit_rows(db_session, "stamp") == 2, "the admin grant and the override are both recorded"
+
+    cancelled = await reports.cancel(db_session, user_id=ALICE, report_id=accepted.report_id, now=moscow(2026, 9, 3))
+    assert cancelled.ok is True and cancelled.stamp_level is None, "no report left, no stamp left"
+
+
+async def test_a_report_does_not_touch_an_admin_stamp_it_cannot_raise(db_session: AsyncSession, season: int) -> None:
+    await stamps.admin_set(
+        db_session,
+        actor_id=ADMIN_ID,
+        season_id=season,
+        user_id=BOB,
+        week_number=1,
+        level=StampLevel.MAX,
+        now=moscow(2026, 9, 1),
+    )
+    await reports.accept(db_session, season_id=season, user_id=BOB, message=text("минимум"), now=moscow(2026, 9, 2))
+    week = await _week(db_session, season, 1)
+    row = (
+        await db_session.execute(
+            select(models.Stamp).where(models.Stamp.user_id == BOB, models.Stamp.week_id == week.id)
+        )
+    ).scalar_one()
+    assert (row.level, row.source) == (StampLevel.MAX.value, models.StampSource.ADMIN.value)
+
+
+async def test_a_letter_is_stored_as_other_and_stays_out_of_the_journal(db_session: AsyncSession, season: int) -> None:
+    """Вне недели фото — письмо Миле, а не отчёт (DOMAIN §2, ARCHITECTURE §6)."""
+    letter = await reports.accept(
+        db_session, season_id=season, user_id=ALICE, message=photo(caption="ещё до старта"), now=moscow(2026, 8, 25)
+    )
+    row = await db_session.get(models.Report, letter.report_id)
+    assert row is not None and row.kind == ReportKind.OTHER.value and row.level == StampLevel.MIN.value
+    assert letter.level is StampLevel.MIN and letter.week_number is None
+
+    view = await journal.build(db_session, season_id=season, user_id=ALICE, today=date(2026, 9, 23))
+    assert view.media == [], "a letter's photo is not part of the season journal"
+
+
+async def test_activity_joins_the_participant_to_the_season(db_session: AsyncSession, season: int) -> None:
+    """Nobody gets stamps without a membership row: the passport would have to invent a date."""
+    carol = 1003
+    await people.upsert_user(
+        db_session, TelegramUser(id=carol, username=None, first_name="Кэрол", last_name=None), now=moscow(2026, 10, 19)
+    )
+    with pytest.raises(people.MembershipMissingError):
+        await passport.build(db_session, season_id=season, user_id=carol, today=date(2026, 10, 20))
+
+    await reports.accept(db_session, season_id=season, user_id=carol, message=photo(), now=moscow(2026, 10, 20))
+    view = await passport.build(db_session, season_id=season, user_id=carol, today=date(2026, 10, 20))
+    assert view.joined_on == date(2026, 10, 20)
+    assert view.breakdown.freezes_used == 0, "weeks before joining spend no freeze"
+    assert carol in await people.members(db_session, season)
+    week_view = await summary.week(db_session, season_id=season, week_number=1, today=date(2026, 10, 20))
+    assert week_view.members_total == 4
+
+
+async def test_journal_media_says_whether_the_file_is_on_disk(
+    db_session: AsyncSession, season: int, tmp_path: Path
+) -> None:
+    accepted = await reports.accept(
+        db_session, season_id=season, user_id=ALICE, message=photo(), now=moscow(2026, 9, 2)
+    )
+    before = await journal.build(db_session, season_id=season, user_id=ALICE, today=date(2026, 9, 23))
+    assert [item.downloaded for item in before.media] == [False]
+
+    await MediaStore(tmp_path).download(db_session, accepted.media_ids[0], FakeTelegram(), now=moscow(2026, 9, 2))
+    after = await journal.build(db_session, season_id=season, user_id=ALICE, today=date(2026, 9, 23))
+    assert [item.downloaded for item in after.media] == [True]
+
+
+async def test_a_truncated_download_is_not_recorded(db_session: AsyncSession, season: int, tmp_path: Path) -> None:
+    """Telegram promised more bytes than arrived: the row stays open for the retry job."""
+    telegram = FakeTelegram(announced_size=1000)
+    accepted = await reports.accept(
+        db_session, season_id=season, user_id=ALICE, message=photo(), now=moscow(2026, 9, 2)
+    )
+    with pytest.raises(media.TruncatedDownloadError):
+        await MediaStore(tmp_path).download(db_session, accepted.media_ids[0], telegram, now=moscow(2026, 9, 2))
+    row = await db_session.get(models.Media, accepted.media_ids[0])
+    assert row is not None and row.downloaded_at is None and row.sha256 is None
+    assert not list(tmp_path.rglob("*.part")), "the half file is dropped, not left to look complete"
+    assert not list(tmp_path.rglob("*.jpg"))
+
+
+async def test_update_week_refuses_a_week_that_is_over(db_session: AsyncSession, season: int) -> None:
+    """«Прошедшие недели задним числом не меняем» (DOMAIN §1)."""
+    week = await _week(db_session, season, 1)
+    with pytest.raises(content.ContentError, match="not edited afterwards"):
+        await content.update_week(
+            db_session,
+            actor_id=ADMIN_ID,
+            week_id=week.id,
+            changes={"task_min": "задним числом"},
+            today=date(2026, 9, 7),
+        )
+    updated = await content.update_week(
+        db_session, actor_id=ADMIN_ID, week_id=week.id, changes={"task_min": "пока идёт"}, today=date(2026, 9, 6)
+    )
+    assert updated.task_min == "пока идёт"
+
+
+async def test_an_abandoned_job_comes_back_to_the_queue(db_session: AsyncSession) -> None:
+    """A worker that dies between claim and finish must not park the job forever."""
+    now = moscow(2026, 9, 3)
+    job_id = await jobs.enqueue(db_session, "media_download", {"media_id": "x"}, now=now)
+    assert await jobs.claim(db_session, now=now) is not None
+    assert await jobs.claim(db_session, now=now + jobs.LEASE - timedelta(seconds=1)) is None, "the lease still holds"
+
+    expired = now + jobs.LEASE + timedelta(seconds=1)
+    assert await jobs.reclaim_abandoned(db_session, now=expired) == 1
+    row = await db_session.get(models.Job, job_id)
+    assert row is not None and row.status == models.JobStatus.QUEUED.value and row.attempts == 1
+    assert row.run_after == expired + jobs.backoff_for(1)
+    again = await jobs.claim(db_session, now=row.run_after)
+    assert again is not None and again.id == job_id
+
+
+async def test_a_long_free_text_achievement_fits_both_columns(db_session: AsyncSession, season: int) -> None:
+    long_text = "Прошёл весь сезон и ни разу не пропустил ни одной недели, " * 6
+    award = await achievements.award(
+        db_session, season_id=season, user_id=ALICE, code_or_text=long_text, awarded_by=ADMIN_ID, now=moscow(2026, 9, 3)
+    )
+    assert award.created is True and len(award.label) == achievements.LABEL_LENGTH
+    assert await achievements.labels(db_session, season_id=season, user_id=ALICE) == [award.label]

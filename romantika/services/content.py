@@ -198,15 +198,28 @@ async def week_by_number(session: AsyncSession, season_id: int, number: int) -> 
 
 
 async def update_week(
-    session: AsyncSession, *, actor_id: int | None, week_id: int, changes: Mapping[str, str]
+    session: AsyncSession,
+    *,
+    actor_id: int | None,
+    week_id: int,
+    changes: Mapping[str, str],
+    today: date | None = None,
 ) -> WeekDTO:
-    """Edit the texts of a week. Only content fields; the calendar is not editable here."""
+    """Edit the texts of a week. Only content fields; the calendar is not editable here.
+
+    «Прошедшие недели задним числом не меняем — люди их уже прожили» (DOMAIN §1, §8): with
+    `today` given, a week that is already over is refused. Callers that edit content on
+    behalf of an admin always pass the Moscow day; `None` skips the calendar check for
+    fixtures and imports.
+    """
     unknown = sorted(set(changes) - EDITABLE_WEEK_FIELDS)
     if unknown:
         raise ValueError(f"week fields {unknown} are not editable (allowed: {sorted(EDITABLE_WEEK_FIELDS)})")
     row = await session.get(models.Week, week_id)
     if row is None:
         raise ContentError(f"week {week_id} does not exist")
+    if today is not None and row.ends_on < today:
+        raise ContentError(f"week {row.number} ended on {row.ends_on} and is not edited afterwards")
 
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}

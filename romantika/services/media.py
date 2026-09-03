@@ -103,7 +103,7 @@ class MediaStore:
         part = target.with_name(target.name + ".part")
         await telegram.download_file(remote.file_path, part)
 
-        digest, size = await asyncio.to_thread(_finalize, part, target)
+        digest, size = await asyncio.to_thread(_finalize, part, target, remote.file_size)
         row.path = relative
         row.sha256 = digest
         row.size = size
@@ -120,13 +120,25 @@ def _with_suffix(relative: str, suffix: str) -> str:
     return str(path.with_suffix(suffix))
 
 
-def _finalize(part: Path, target: Path) -> tuple[str, int]:
-    """Hash the downloaded part file and move it into place atomically (same filesystem)."""
+class TruncatedDownloadError(OSError):
+    """Telegram announced more bytes than arrived; the file on disk is incomplete."""
+
+
+def _finalize(part: Path, target: Path, expected_size: int | None) -> tuple[str, int]:
+    """Hash the downloaded part file and move it into place atomically (same filesystem).
+
+    A stream cut short by the network must never become a `downloaded_at` row with a
+    plausible sha256: the part file is dropped and the caller (or the `media_download` job)
+    fetches it again.
+    """
     digest = hashlib.sha256()
     size = 0
     with part.open("rb") as handle:
         while chunk := handle.read(_CHUNK):
             digest.update(chunk)
             size += len(chunk)
+    if expected_size is not None and size != expected_size:
+        part.unlink(missing_ok=True)
+        raise TruncatedDownloadError(f"{target.name}: expected {expected_size} bytes, got {size}")
     part.replace(target)
     return digest.hexdigest(), size

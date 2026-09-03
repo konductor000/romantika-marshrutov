@@ -10,12 +10,13 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.db import models
 from romantika.domain import rules
 from romantika.domain.types import StampLevel
-from romantika.services import content
+from romantika.services import content, people
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,8 +33,12 @@ class StampResult:
         return self.level is StampLevel.MAX and self.previous is not StampLevel.MAX
 
 
-async def _row(session: AsyncSession, *, user_id: int, week_id: int) -> models.Stamp | None:
+async def _row(session: AsyncSession, *, user_id: int, week_id: int, for_update: bool = False) -> models.Stamp | None:
     query = select(models.Stamp).where(models.Stamp.user_id == user_id, models.Stamp.week_id == week_id)
+    if for_update:
+        # Two updates of the same album arrive concurrently; the loser waits here instead of
+        # blowing up on the unique constraint and rolling back its own report.
+        query = query.with_for_update()
     return (await session.execute(query)).scalar_one_or_none()
 
 
@@ -52,26 +57,53 @@ async def merge(
     level: StampLevel,
     now: datetime,
 ) -> StampResult:
-    """Award the stamp or raise its level; a maximum is never lowered back to a minimum."""
-    row = await _row(session, user_id=user_id, week_id=week_id)
+    """Award the stamp or raise its level; a maximum is never lowered back to a minimum.
+
+    A report that actually changes the level takes the provenance with it: the row stops
+    claiming `source = admin`, so `reports.cancel` may recompute it from the reports that
+    are left (DOMAIN §2, §10.9). Overriding a stamp Mila set by hand is audited, so her
+    grant stays visible even after the recomputation.
+    """
+    row = await _row(session, user_id=user_id, week_id=week_id, for_update=True)
     if row is None:
-        row = models.Stamp(
-            season_id=season_id,
-            user_id=user_id,
-            week_id=week_id,
-            level=level.value,
-            week_title_snapshot=week_title,
-            awarded_at=now,
-            source=models.StampSource.REPORT.value,
+        insert = (
+            pg_insert(models.Stamp)
+            .values(
+                season_id=season_id,
+                user_id=user_id,
+                week_id=week_id,
+                level=level.value,
+                week_title_snapshot=week_title,
+                awarded_at=now,
+                source=models.StampSource.REPORT.value,
+            )
+            .on_conflict_do_nothing(constraint="uq_stamps_user_id_week_id")
+            .returning(models.Stamp.id)
         )
-        session.add(row)
-        await session.flush()
-        return StampResult(level=level, previous=None, created=True)
+        if (await session.execute(insert)).scalar_one_or_none() is not None:
+            return StampResult(level=level, previous=None, created=True)
+        # Another worker inserted the row first; its transaction is committed by now.
+        row = await _row(session, user_id=user_id, week_id=week_id, for_update=True)
+        if row is None:  # pragma: no cover - the conflicting row cannot vanish again
+            raise RuntimeError(f"stamp of user {user_id} for week {week_id} disappeared")
 
     previous = StampLevel(row.level)
     merged = rules.merge_level(previous, level)
-    row.level = merged.value
-    await session.flush()
+    if merged is not previous:
+        if row.source == models.StampSource.ADMIN.value:
+            content.audit(
+                session,
+                actor_id=user_id,
+                action="override",
+                entity="stamp",
+                entity_id=f"{user_id}:{week_id}",
+                before={"level": previous.value, "source": row.source},
+                after={"level": merged.value, "source": models.StampSource.REPORT.value},
+            )
+        row.level = merged.value
+        row.source = models.StampSource.REPORT.value
+        row.awarded_at = now
+        await session.flush()
     return StampResult(level=merged, previous=previous, created=False)
 
 
@@ -89,6 +121,10 @@ async def admin_set(
     week = await content.week_by_number(session, season_id, week_number)
     if week is None:
         raise content.ContentError(f"season {season_id} has no week {week_number}")
+    if level is not None:
+        # A stamp implies participation: without the membership row every season-wide view
+        # would count this person in the numerator and not in the denominator.
+        await people.ensure_member(session, season_id, user_id, now=now)
 
     row = await _row(session, user_id=user_id, week_id=week.id)
     before = None if row is None else {"level": row.level, "source": row.source}

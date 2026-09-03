@@ -67,6 +67,15 @@ async def build(session: AsyncSession, *, season_id: int, user_id: int, today: d
 
 
 async def joined_day(session: AsyncSession, *, season: SeasonDTO, user_id: int) -> date:
-    """The Moscow day the participant joined the season; the first day when we don't know."""
+    """The Moscow day the participant joined the season.
+
+    Missing membership is an error, not a default: guessing the season's first day would
+    silently turn every week before the real first contact into a missed one and burn the
+    freezes of a person who was not there yet (DOMAIN §3). Every service that records
+    activity (`reports.accept`, `words.add`, `people.set_intent`, `stamps.admin_set`) joins
+    the person to the season, so a missing row means the caller invented the participant.
+    """
     joined = await people.member_joined_at(session, season.id, user_id)
-    return season.starts_on if joined is None else to_moscow(joined).date()
+    if joined is None:
+        raise people.MembershipMissingError(f"user {user_id} is not a member of season {season.id}")
+    return to_moscow(joined).date()

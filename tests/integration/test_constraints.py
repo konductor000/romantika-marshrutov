@@ -118,3 +118,32 @@ async def test_denormalized_season_must_match_the_week(db_session: AsyncSession,
     db_session.add(rows[table])
     with pytest.raises(IntegrityError):
         await db_session.flush()
+
+
+async def test_an_automatic_freeze_reason_is_unique_per_participant(db_session: AsyncSession) -> None:
+    """`word` and `max` are granted once per season; the index says so, not only the service."""
+    week = await _mexico_week_one(db_session)
+    user = models.User(id=4242, first_name="Кон")
+    db_session.add(user)
+    await db_session.flush()
+
+    def freeze(reason: models.FreezeReason) -> models.Freeze:
+        return models.Freeze(season_id=week.season_id, user_id=user.id, reason=reason.value)
+
+    db_session.add(freeze(models.FreezeReason.WORD))
+    await db_session.flush()
+    db_session.add(freeze(models.FreezeReason.WORD))
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+async def test_a_manual_freeze_reason_repeats(db_session: AsyncSession) -> None:
+    week = await _mexico_week_one(db_session)
+    user = models.User(id=4343, first_name="Кон")
+    db_session.add(user)
+    await db_session.flush()
+    for _ in range(2):
+        db_session.add(models.Freeze(season_id=week.season_id, user_id=user.id, reason="manual"))
+    await db_session.flush()
+    rows = (await db_session.execute(select(models.Freeze).where(models.Freeze.user_id == user.id))).scalars().all()
+    assert len(rows) == 2
