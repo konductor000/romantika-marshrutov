@@ -423,3 +423,14 @@ Cyrillic. Photos referenced by absolute file paths under MEDIA_DIR (no network).
 maps 12 legacy tables to the model (see DOMAIN.md §9 for the mapping), downloads every
 `file_id` via the bot token into MEDIA_DIR, is idempotent (re-running updates nothing that
 already matches), and prints a reconciliation table (legacy counts vs imported counts).
+
+## 14. Process (binding; mirrors `tests/acceptance/test_stage7_process.py`)
+
+- `CLAUDE.md` (rules + commands + change workflow), `README.md`, `docs/RUNBOOK.md`
+  (Deploy, Logs, Backup, Restore, Cut-over from the legacy bot, Release checklist,
+  Rollback), `docs/GUIDE-RU.md` (owner's guide in Russian: admin Mini App, bot panel,
+  what backups are and how to check them, how to ask Claude for a change safely, PDF).
+- In-repo review roles `.claude/agents/forge-*.md` (copies of the global forge roles,
+  project-specific rubrics appended), skill `.claude/skills/release-check/SKILL.md` and
+  workflow `.claude/workflows/release-check.js` (verifier + code/security/data lenses over
+  the diff of the release branch; ui lens optional).
