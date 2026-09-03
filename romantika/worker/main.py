@@ -6,8 +6,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
-from aiogram import Bot
-
+from romantika.bot.factory import make_bot
 from romantika.bot.gateway import AiogramTelegramGateway
 from romantika.config import Settings, get_settings
 from romantika.db.session import make_session_factory
@@ -34,7 +33,7 @@ async def run() -> None:
         raise SystemExit("BOT_TOKEN is not set")
     session_factory = make_session_factory(settings.database_url)
     media_store = MediaStore(settings.media_dir)
-    bot = Bot(settings.bot_token)
+    bot = make_bot(settings)
     telegram = AiogramTelegramGateway(bot)
     admin_chat = admin_chat_of(settings)
     logger.info(

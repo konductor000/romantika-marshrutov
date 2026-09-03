@@ -385,8 +385,7 @@ async def import_legacy(
 
 
 async def _main(args: argparse.Namespace) -> None:
-    from aiogram import Bot
-
+    from romantika.bot.factory import make_bot
     from romantika.bot.gateway import AiogramTelegramGateway
     from romantika.config import get_settings
     from romantika.db.session import make_session_factory
@@ -395,7 +394,7 @@ async def _main(args: argparse.Namespace) -> None:
     settings = get_settings()
     setup_logging(settings.log_level)
     factory = make_session_factory(settings.database_url)
-    bot = Bot(settings.bot_token)
+    bot = make_bot(settings)
     try:
         async with factory() as session, session.begin():
             season = await session.scalar(select(models.Season).where(models.Season.slug == args.season_slug))

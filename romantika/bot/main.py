@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from aiogram import Bot
-
 from romantika.bot.app import create_dispatcher
+from romantika.bot.factory import make_bot
 from romantika.config import get_settings
 from romantika.db.session import make_session_factory
 from romantika.logging import setup_logging
@@ -23,7 +22,7 @@ async def run() -> None:
         raise SystemExit("BOT_TOKEN is not set")
     session_factory = make_session_factory(settings.database_url)
     dispatcher = create_dispatcher(settings, session_factory, MediaStore(settings.media_dir))
-    bot = Bot(settings.bot_token)
+    bot = make_bot(settings)
     me = await bot.get_me()
     logger.info("bot_started", extra={"username": me.username, "admins": list(settings.admin_ids)})
     if not settings.admin_ids:

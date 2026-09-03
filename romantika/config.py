@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     backups_dir: Path = Path("/backups")
     admin_chat_id: int | None = None
     bot_username: str = ""
+    # aiohttp ignores HTTPS_PROXY; the bot/worker pass this explicitly (TELEGRAM_PROXY or HTTPS_PROXY).
+    telegram_proxy: str = Field(default="", validation_alias=AliasChoices("TELEGRAM_PROXY", "HTTPS_PROXY"))
     channel_url: str = ""
     log_level: str = "INFO"
     env: str = "dev"
