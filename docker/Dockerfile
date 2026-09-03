@@ -38,7 +38,7 @@ COPY data ./data
 COPY alembic.ini Makefile ./
 COPY scripts ./scripts
 COPY docker/entrypoint.sh /app/docker/entrypoint.sh
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-editable
 
 RUN set -eux; \
     useradd --uid 1000 --create-home --shell /usr/sbin/nologin app; \
