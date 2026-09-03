@@ -180,6 +180,31 @@ Key flows:
   `content.active_season(session, today)`; `content.week_for(session, season, today)`.
 - `seed.import_season(session, path)` — idempotent upsert by slug/number.
 
+### 6.1 Service API (binding; mirrors `tests/acceptance/test_stage2_services.py`)
+
+Time is always explicit: `now: datetime` (aware, UTC) or `today: date` (Moscow calendar day).
+`romantika/services/gateways.py` defines the `TelegramGateway` protocol
+(`get_file(file_id) -> TelegramFile(file_path, file_size)`, `download_file(file_path,
+destination: Path)`, later stages add `send_message(chat_id, text)` and
+`send_document(chat_id, path, caption)`); the bot provides an adapter over aiogram, tests use fakes.
+
+| Module | Functions (all `async`, first arg `session`) |
+|---|---|
+| `people` | `upsert_user(session, tg: TelegramUser, *, now) -> UserDTO` (keeps first `joined_at`); `ensure_member(session, season_id, user_id, *, now) -> datetime` (returns existing `joined_at`); `set_dialog_state(session, user_id, state, payload=None, *, now)`, `get_dialog_state(session, user_id, *, now) -> DialogStateDTO | None` (TTL 6 h), `clear_dialog_state(session, user_id)`; `set_intent(session, *, season_id, user_id, week_id, choice: IntentChoice, now)` |
+| `content` | `active_season(session, *, today) -> SeasonDTO | None`; `activate_season(session, season_id, *, actor_id)`; `weeks(session, season_id) -> list[WeekDTO]`; `current_week(session, season_id, *, today) -> WeekDTO | None`; `update_week(session, *, actor_id, week_id, changes: dict[str, str]) -> WeekDTO` (only title/intro/task_min/task_max/word/word_ru/word_meaning; audit row); `get_setting/set_setting(session, key, value)` |
+| `reports` | `IncomingFile`, `IncomingMessage` dataclasses; `accept(session, *, season_id, user_id, message, now) -> AcceptResult(report_id, week_number, out_of_week, level, stamp_level, freeze_granted, media_ids)`; `fix_level(session, *, season_id, user_id, week_number, level, now) -> FixResult(ok, stamp_level, reason)`; `cancel(session, *, user_id, report_id, now) -> CancelResult(ok, stamp_level)` |
+| `stamps` | `admin_set(session, *, actor_id, season_id, user_id, week_number, level: StampLevel | None, now) -> StampLevel | None` (audit row) |
+| `freezes` | `grant(session, *, season_id, user_id, reason: FreezeReason, granted_by, now, note=None) -> bool`; `bonus_count(session, season_id, user_id) -> int` |
+| `media` | `MediaStore(root: Path)`: `.root`, `download(session, media_id, telegram, *, now) -> MediaDTO(path, sha256, size)`; path `<season_slug>/<user_id>/<uuid>.<ext>`, `.part` + atomic rename, idempotent |
+| `achievements` | `award(session, *, season_id, user_id, code_or_text, awarded_by, now) -> AwardResult(created, code, label)`; `labels(session, *, season_id, user_id) -> list[str]` |
+| `words` | `add(session, *, season_id, user_id, week_id, raw, now) -> WordResult(word, meaning, freeze_granted)`; `season_dictionary(session, season_id, *, today) -> DictionaryView(week_words, user_words)` |
+| `facts` | `add(session, *, season_id, week_id, text, author_id, now) -> int`; `list_active(session, season_id) -> list[FactDTO]`; `remove(session, *, fact_id, actor_id, now) -> bool` |
+| `wishes` | `set_wish(session, *, season_id, user_id, text, now)`; `get_wish(session, season_id, user_id) -> str | None` |
+| `passport` | `build(session, *, season_id, user_id, today) -> PassportView(breakdown, stamps_max, level, achievements, ...)` |
+| `journal` | `build(session, *, season_id, user_id, today) -> JournalView(user, season, weeks: [JournalWeek(number, title, level, quote)], media: [JournalMedia(media_id, path)], achievements, words, facts, wish)` |
+| `summary` | `week(session, *, season_id, week_number, today) -> WeekSummary(members_total, reports_total, took, submitted: dict[int, StampLevel], took_not_submitted, core_best, core_current)`; `reminder_recipients(session, *, season_id, week_number) -> list[int]`; `draft_post(...)` |
+| `jobs` | `enqueue(session, kind, payload, *, now, run_after=None) -> int`; `claim(session, *, now) -> JobDTO | None` (`FOR UPDATE SKIP LOCKED`, respects `run_after`); `finish(session, job_id, *, error, now)` (error → requeue with exponential backoff, `failed` after 5 attempts) |
+
 ## 7. Bot (aiogram 3)
 
 - Long polling (`allowed_updates=["message","callback_query"]`), `drop_pending_updates=False`.
