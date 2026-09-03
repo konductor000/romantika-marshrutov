@@ -174,3 +174,23 @@ async def test_re_import_reports_rows_the_file_no_longer_describes(db_session: A
     # Seed never deletes; it says how many rows the season has and how many are orphaned.
     assert (result.weeks, result.weeks_stale) == (12, 1)
     assert (result.achievement_types, result.achievement_types_stale) == (9, 1)
+
+
+async def test_re_import_refuses_a_key_described_twice(db_session: AsyncSession, tmp_path: Path) -> None:
+    import json
+
+    await seed.import_season(db_session, SEASON_JSON)
+    payload = json.loads(SEASON_JSON.read_text(encoding="utf-8"))
+    duplicate_week = dict(payload["weeks"][2], title="ДУБЛЬ", minimum="подменённый минимум")
+    payload["weeks"].append(duplicate_week)
+    payload["achievements"].append(dict(payload["achievements"][0], name="ДУБЛЬ-АЧИВКА"))
+    doubled = tmp_path / "mexico-2026.json"
+    doubled.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    # On a re-import the database sees only an upsert onto an existing row, so nothing but
+    # this check stands between a doubled line in the file and silently lost content.
+    with pytest.raises(seed.SeedError, match="week 3 is described twice"):
+        await seed.import_season(db_session, doubled)
+
+    title = (await db_session.execute(select(models.Week.title).where(models.Week.number == 3))).scalar_one()
+    assert title != "ДУБЛЬ"

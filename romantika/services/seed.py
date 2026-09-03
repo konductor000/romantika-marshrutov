@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -41,7 +42,20 @@ class SeedResult:
 
 
 class SeedError(ValueError):
-    """A season file is missing a key without which the content makes no sense."""
+    """A season file is unusable: a required field is empty, or a key is described twice."""
+
+
+def _reject_duplicates(keys: Sequence[object], what: str) -> None:
+    """Two lines with the same key would upsert onto each other and lose the earlier one.
+
+    The database catches that only while creating rows; on a re-import — the very path the
+    seed exists for — it would pass silently, so the file is checked before it is applied.
+    """
+    seen: set[object] = set()
+    for key in keys:
+        if key in seen:
+            raise SeedError(f"{what} {key!r} is described twice in the file")
+        seen.add(key)
 
 
 def _as_date(payload: dict[str, Any], key: str, where: str) -> date:
@@ -130,9 +144,10 @@ async def _import_weeks(session: AsyncSession, season: models.Season, weeks: lis
         week.number: week
         for week in (await session.execute(select(models.Week).where(models.Week.season_id == season.id))).scalars()
     }
+    numbers = [int(_required(item, "num", "week")) for item in weeks]
+    _reject_duplicates(numbers, "week")
     created = 0
-    for item in weeks:
-        number = int(_required(item, "num", "week"))
+    for number, item in zip(numbers, weeks, strict=True):
         where = f"week {number}"
         week = existing.get(number)
         if week is None:
@@ -150,8 +165,8 @@ async def _import_weeks(session: AsyncSession, season: models.Season, weeks: lis
         week.word_meaning = _text(item, "word_meaning")
     await session.flush()
     await session.execute(text("SET CONSTRAINTS weeks_no_overlap IMMEDIATE"))
-    numbers = {int(_required(item, "num", "week")) for item in weeks}
-    return created, len([number for number in existing if number not in numbers])
+    described = set(numbers)
+    return created, len([number for number in existing if number not in described])
 
 
 async def _import_achievement_types(
@@ -164,9 +179,10 @@ async def _import_achievement_types(
             await session.execute(select(models.AchievementType).where(models.AchievementType.season_id == season.id))
         ).scalars()
     }
+    codes = [_required(item, "code", "achievement") for item in achievements]
+    _reject_duplicates(codes, "achievement")
     created = 0
-    for index, item in enumerate(achievements):
-        code = _required(item, "code", "achievement")
+    for index, (code, item) in enumerate(zip(codes, achievements, strict=True)):
         row = existing.get(code)
         if row is None:
             row = models.AchievementType(season_id=season.id, code=code)
@@ -176,5 +192,5 @@ async def _import_achievement_types(
         row.name = _required(item, "name", f"achievement '{code}'")
         row.description = _text(item, "for")
         row.sort = int(item.get("index", index))
-    codes = {_required(item, "code", "achievement") for item in achievements}
-    return created, len([code for code in existing if code not in codes])
+    described = set(codes)
+    return created, len([code for code in existing if code not in described])

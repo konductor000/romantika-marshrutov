@@ -127,3 +127,17 @@ def test_core_is_empty_without_streaks() -> None:
     lonely = run({2: StampLevel.MIN}, date(2026, 9, 23))
     assert core_members({7: lonely}) == []
     assert core_members({}) == []
+
+
+def test_stamps_keyed_by_anything_but_week_numbers_are_a_data_error() -> None:
+    # `stamps.week_id` and `week.number` are both ints: without this the passport of a
+    # participant with four stamps would quietly render as "nothing done yet".
+    with pytest.raises(ValueError, match="week number"):
+        run({101: StampLevel.MAX, 102: StampLevel.MAX}, date(2026, 11, 25))
+
+
+def test_a_stamp_on_a_week_that_has_not_started_still_counts() -> None:
+    breakdown = run({1: StampLevel.MIN, 12: StampLevel.MAX}, date(2026, 9, 16))
+    assert breakdown.states[12] is WeekState.LOCKED
+    assert breakdown.stamps == 2
+    assert breakdown.best_streak == 1

@@ -55,11 +55,25 @@ def season_breakdown(
 
     Freeze spending is recomputed on every view (never stored), so a freeze granted later
     turns a past miss back into a frozen week — deliberately kept from legacy.
+
+    `stamps` is keyed by **week number**, not by `stamps.week_id`: both are `int`, so a
+    caller that passes ids would silently get an honest-looking "nothing done" passport.
+    Keys that match no week are therefore a data error, not zero stamps.
     """
+    numbers = {week.number for week in weeks}
+    unknown = sorted(set(stamps) - numbers)
+    if unknown:
+        raise ValueError(
+            f"stamps must be keyed by week number, not week id: {unknown} match no week of "
+            f"this season (numbers {sorted(numbers)})"
+        )
+
     total = total_freezes(bonus_freezes=bonus_freezes, base_freezes=base_freezes, max_freezes=max_freezes)
     states: dict[int, WeekState] = {}
     used = 0
-    stamped = 0
+    # Every stamp counts, as in legacy: a stamp Mila put on a week that has not started yet
+    # (DOMAIN §2) leaves that week `locked` for everyone, but the participant has it.
+    stamped = len(stamps)
     streak = 0
     best = 0
 
@@ -69,7 +83,6 @@ def season_breakdown(
             continue
         if week.number in stamps:
             states[week.number] = WeekState.STAMPED
-            stamped += 1
             streak += 1
             best = max(best, streak)
             continue
