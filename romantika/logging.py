@@ -29,7 +29,9 @@ class JsonFormatter(logging.Formatter):
                 payload[key] = value
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
-        return json.dumps(payload, ensure_ascii=False)
+        # `default=str` keeps an extra that is not JSON-native (UUID, date, datetime, Path)
+        # from raising and dropping the whole record.
+        return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 def setup_logging(level: str = "INFO", *, json_output: bool = False) -> None:

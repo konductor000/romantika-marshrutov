@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +36,9 @@ class Settings(BaseSettings):
     bot_token: str = ""
     admin_ids: Annotated[tuple[int, ...], NoDecode] = ()
     database_url: str = "postgresql+asyncpg://romantika:romantika@127.0.0.1:5432/romantika"
-    media_dir: Path = PROJECT_ROOT / "data" / "media"
+    # Required on purpose: a default would silently point inside site-packages in a
+    # non-editable install, and participant media would land there instead of on a volume.
+    media_dir: Path = Field(description="MEDIA_DIR: directory holding participant media (required).")
     public_base_url: str = "http://127.0.0.1:8010"
     admin_chat_id: int | None = None
     log_level: str = "INFO"
@@ -49,6 +51,14 @@ class Settings(BaseSettings):
         """`ADMIN_IDS` is a comma-separated list of Telegram ids."""
         if isinstance(value, str):
             return tuple(int(part) for part in value.replace(";", ",").split(",") if part.strip())
+        return value
+
+    @field_validator("media_dir", mode="before")
+    @classmethod
+    def _require_media_dir(cls, value: object) -> object:
+        """An empty `MEDIA_DIR` is as wrong as a missing one, and fails just as loudly."""
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("MEDIA_DIR must be set to the directory holding participant media")
         return value
 
     @field_validator("admin_chat_id", "dev_auth_user_id", mode="before")
