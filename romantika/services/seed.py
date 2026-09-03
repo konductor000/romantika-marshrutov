@@ -1,21 +1,26 @@
 """Import a season description (`data/seasons/*.json`) into the database.
 
-Idempotent: rerunning updates the rows in place, so content fixes can be re-imported.
+Idempotent: rerunning updates the rows in place, so content fixes — including a moved
+calendar — can be re-imported. Rows the file no longer describes are never deleted (stamps
+and reports point at them); `SeedResult` counts them as `*_stale` instead.
 Like every service, it flushes but never commits — the caller owns the transaction.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.db import models
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,9 +31,13 @@ class SeedResult:
     slug: str
     created: bool
     weeks: int
+    """Weeks of the season in the database after the import, not lines in the file."""
     weeks_created: int
+    weeks_stale: int
+    """Weeks left in the database that the file no longer describes; seed never deletes."""
     achievement_types: int
     achievement_types_created: int
+    achievement_types_stale: int
 
 
 class SeedError(ValueError):
@@ -76,22 +85,47 @@ async def import_season(session: AsyncSession, path: Path) -> SeedResult:
     season.daily_note = _text(daily, "note")
     await session.flush()
 
-    weeks_created = await _import_weeks(session, season, payload.get("weeks") or [])
-    types_created = await _import_achievement_types(session, season, payload.get("achievements") or [])
+    weeks_created, weeks_stale = await _import_weeks(session, season, payload.get("weeks") or [])
+    types_created, types_stale = await _import_achievement_types(session, season, payload.get("achievements") or [])
     await session.flush()
 
-    return SeedResult(
+    result = SeedResult(
         season_id=season.id,
         slug=slug,
         created=created,
-        weeks=len(payload.get("weeks") or []),
+        weeks=await _count(session, models.Week, season.id),
         weeks_created=weeks_created,
-        achievement_types=len(payload.get("achievements") or []),
+        weeks_stale=weeks_stale,
+        achievement_types=await _count(session, models.AchievementType, season.id),
         achievement_types_created=types_created,
+        achievement_types_stale=types_stale,
     )
+    if result.weeks_stale or result.achievement_types_stale:
+        logger.warning(
+            "season %s: %d week(s) and %d achievement type(s) in the database are not in the file; "
+            "seed never deletes, remove them by hand if they are wrong",
+            slug,
+            result.weeks_stale,
+            result.achievement_types_stale,
+        )
+    return result
 
 
-async def _import_weeks(session: AsyncSession, season: models.Season, weeks: list[dict[str, Any]]) -> int:
+async def _count(session: AsyncSession, model: type[models.Week] | type[models.AchievementType], season_id: int) -> int:
+    """How many rows the season really has, so a caller can compare it with the file."""
+    query = select(func.count()).select_from(model).where(model.season_id == season_id)
+    return (await session.execute(query)).scalar_one()
+
+
+async def _import_weeks(session: AsyncSession, season: models.Season, weeks: list[dict[str, Any]]) -> tuple[int, int]:
+    """Upsert the weeks of a season; returns (created, stale).
+
+    The weeks are updated one by one, so moving the calendar (every week shifted by a day)
+    goes through states where two weeks overlap. `weeks_no_overlap` is deferred for the
+    duration and set back to immediate at the end, which checks the final state right here
+    instead of leaving a surprise for the caller's commit.
+    """
+    await session.execute(text("SET CONSTRAINTS weeks_no_overlap DEFERRED"))
     existing = {
         week.number: week
         for week in (await session.execute(select(models.Week).where(models.Week.season_id == season.id))).scalars()
@@ -114,12 +148,16 @@ async def _import_weeks(session: AsyncSession, season: models.Season, weeks: lis
         week.word = _text(item, "word")
         week.word_ru = _text(item, "word_ru")
         week.word_meaning = _text(item, "word_meaning")
-    return created
+    await session.flush()
+    await session.execute(text("SET CONSTRAINTS weeks_no_overlap IMMEDIATE"))
+    numbers = {int(_required(item, "num", "week")) for item in weeks}
+    return created, len([number for number in existing if number not in numbers])
 
 
 async def _import_achievement_types(
     session: AsyncSession, season: models.Season, achievements: list[dict[str, Any]]
-) -> int:
+) -> tuple[int, int]:
+    """Upsert the achievement catalogue of a season; returns (created, stale)."""
     existing = {
         row.code: row
         for row in (
@@ -138,4 +176,5 @@ async def _import_achievement_types(
         row.name = _required(item, "name", f"achievement '{code}'")
         row.description = _text(item, "for")
         row.sort = int(item.get("index", index))
-    return created
+    codes = {_required(item, "code", "achievement") for item in achievements}
+    return created, len([code for code in existing if code not in codes])

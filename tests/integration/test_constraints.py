@@ -101,3 +101,20 @@ async def test_report_without_a_week_is_allowed(db_session: AsyncSession) -> Non
 
     db_session.add(models.Report(season_id=week.season_id, user_id=2003, week_id=None, kind="other", level="min"))
     await db_session.flush()
+
+
+@pytest.mark.parametrize("table", ["intents", "words", "facts"])
+async def test_denormalized_season_must_match_the_week(db_session: AsyncSession, table: str) -> None:
+    week = await _mexico_week_one(db_session)
+    other = await _other_season(db_session, starts_on=date(2027, 1, 4))
+    db_session.add(models.User(id=2100, first_name="Test"))
+    await db_session.flush()
+
+    rows = {
+        "intents": models.WeekIntent(season_id=other.id, user_id=2100, week_id=week.id, choice="take"),
+        "words": models.Word(season_id=other.id, user_id=2100, week_id=week.id, word="antojo"),
+        "facts": models.Fact(season_id=other.id, week_id=week.id, text="cross-season"),
+    }
+    db_session.add(rows[table])
+    with pytest.raises(IntegrityError):
+        await db_session.flush()

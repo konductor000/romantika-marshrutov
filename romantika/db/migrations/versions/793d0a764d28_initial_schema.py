@@ -210,7 +210,8 @@ def upgrade() -> None:
     op.create_index(op.f("ix_weeks_season_id"), "weeks", ["season_id"], unique=False)
     op.execute(
         "ALTER TABLE weeks ADD CONSTRAINT weeks_no_overlap "
-        "EXCLUDE USING gist (season_id WITH =, daterange(starts_on, ends_on, '[]') WITH &&)"
+        "EXCLUDE USING gist (season_id WITH =, daterange(starts_on, ends_on, '[]') WITH &&) "
+        "DEFERRABLE INITIALLY IMMEDIATE"
     )
     op.create_table(
         "wishes",
@@ -238,7 +239,11 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["author_id"], ["users.id"], name=op.f("fk_facts_author_id_users")),
         sa.ForeignKeyConstraint(["season_id"], ["seasons.id"], name=op.f("fk_facts_season_id_seasons")),
-        sa.ForeignKeyConstraint(["week_id"], ["weeks.id"], name=op.f("fk_facts_week_id_weeks")),
+        sa.ForeignKeyConstraint(
+            ["season_id", "week_id"],
+            ["weeks.season_id", "weeks.id"],
+            name="fk_facts_season_id_week_id_weeks",
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_facts")),
     )
     op.create_index(op.f("ix_facts_author_id"), "facts", ["author_id"], unique=False)
@@ -256,7 +261,11 @@ def upgrade() -> None:
         sa.CheckConstraint("choice IN ('take', 'try', 'skip')", name=op.f("ck_intents_choice")),
         sa.ForeignKeyConstraint(["season_id"], ["seasons.id"], name=op.f("fk_intents_season_id_seasons")),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_intents_user_id_users")),
-        sa.ForeignKeyConstraint(["week_id"], ["weeks.id"], name=op.f("fk_intents_week_id_weeks")),
+        sa.ForeignKeyConstraint(
+            ["season_id", "week_id"],
+            ["weeks.season_id", "weeks.id"],
+            name="fk_intents_season_id_week_id_weeks",
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_intents")),
         sa.UniqueConstraint("user_id", "week_id", name="uq_intents_user_id_week_id"),
     )
@@ -330,7 +339,11 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["season_id"], ["seasons.id"], name=op.f("fk_words_season_id_seasons")),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_words_user_id_users")),
-        sa.ForeignKeyConstraint(["week_id"], ["weeks.id"], name=op.f("fk_words_week_id_weeks")),
+        sa.ForeignKeyConstraint(
+            ["season_id", "week_id"],
+            ["weeks.season_id", "weeks.id"],
+            name="fk_words_season_id_week_id_weeks",
+        ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_words")),
     )
     op.create_index(op.f("ix_words_season_id"), "words", ["season_id"], unique=False)

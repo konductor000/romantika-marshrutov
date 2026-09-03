@@ -124,3 +124,53 @@ async def test_import_refuses_a_file_missing_required_content(
 
     with pytest.raises(seed.SeedError, match=message):
         await seed.import_season(db_session, broken)
+
+
+async def test_re_import_can_move_the_whole_calendar(db_session: AsyncSession, tmp_path: Path) -> None:
+    """Every week shifted by a day: the intermediate states overlap, the final one does not."""
+    import json
+    from datetime import date, timedelta
+
+    await seed.import_season(db_session, SEASON_JSON)
+    payload = json.loads(SEASON_JSON.read_text(encoding="utf-8"))
+    for week in payload["weeks"]:
+        for key in ("start", "end"):
+            week[key] = (date.fromisoformat(week[key]) + timedelta(days=1)).isoformat()
+    shifted = tmp_path / "mexico-2026.json"
+    shifted.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    result = await seed.import_season(db_session, shifted)
+
+    assert (result.weeks, result.weeks_created) == (12, 0)
+    starts = (await db_session.execute(select(models.Week.starts_on).order_by(models.Week.number))).scalars().all()
+    assert [str(day) for day in starts] == [week["start"] for week in payload["weeks"]]
+
+
+async def test_re_import_of_an_overlapping_calendar_is_still_refused(db_session: AsyncSession, tmp_path: Path) -> None:
+    import json
+
+    await seed.import_season(db_session, SEASON_JSON)
+    payload = json.loads(SEASON_JSON.read_text(encoding="utf-8"))
+    payload["weeks"][1]["start"] = payload["weeks"][0]["start"]
+    broken = tmp_path / "mexico-2026.json"
+    broken.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(IntegrityError):
+        await seed.import_season(db_session, broken)
+
+
+async def test_re_import_reports_rows_the_file_no_longer_describes(db_session: AsyncSession, tmp_path: Path) -> None:
+    import json
+
+    await seed.import_season(db_session, SEASON_JSON)
+    payload = json.loads(SEASON_JSON.read_text(encoding="utf-8"))
+    payload["weeks"] = payload["weeks"][:11]
+    payload["achievements"] = payload["achievements"][:8]
+    shorter = tmp_path / "mexico-2026.json"
+    shorter.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    result = await seed.import_season(db_session, shorter)
+
+    # Seed never deletes; it says how many rows the season has and how many are orphaned.
+    assert (result.weeks, result.weeks_stale) == (12, 1)
+    assert (result.achievement_types, result.achievement_types_stale) == (9, 1)

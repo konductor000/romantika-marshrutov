@@ -169,11 +169,15 @@ class Week(Base, TimestampMixin):
         CheckConstraint("number >= 1", name="number"),
         CheckConstraint("ends_on >= starts_on", name="dates"),
         # Weeks of one season may not overlap: `calendar.week_for` must find at most one.
+        # Deferrable, so that a re-import may move the whole calendar row by row: the
+        # intermediate states overlap even when the final one does not (see `services.seed`).
         ExcludeConstraint(
             ("season_id", "="),
             (text("daterange(starts_on, ends_on, '[]')"), "&&"),
             name="weeks_no_overlap",
             using="gist",
+            deferrable=True,
+            initially="IMMEDIATE",
         ),
     )
 
@@ -223,13 +227,17 @@ class WeekIntent(Base, TimestampMixin):
     __tablename__ = "intents"
     __table_args__ = (
         UniqueConstraint("user_id", "week_id", name="uq_intents_user_id_week_id"),
+        # The denormalized season must be the season the week belongs to.
+        ForeignKeyConstraint(
+            ["season_id", "week_id"], ["weeks.season_id", "weeks.id"], name="fk_intents_season_id_week_id_weeks"
+        ),
         enum_check("choice", IntentChoice, "choice"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    week_id: Mapped[int] = mapped_column(ForeignKey("weeks.id"), nullable=False, index=True)
+    week_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     choice: Mapped[str] = mapped_column(String(16), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         Timestamp, server_default=func.now(), onupdate=func.now(), nullable=False
@@ -337,11 +345,17 @@ class Word(Base, TimestampMixin):
     """A word a participant added to the dictionary («слово — что значит»)."""
 
     __tablename__ = "words"
+    __table_args__ = (
+        # The denormalized season must be the season the week belongs to (NULL week: no check).
+        ForeignKeyConstraint(
+            ["season_id", "week_id"], ["weeks.season_id", "weeks.id"], name="fk_words_season_id_week_id_weeks"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id"), nullable=False, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    week_id: Mapped[int | None] = mapped_column(ForeignKey("weeks.id"), index=True)
+    week_id: Mapped[int | None] = mapped_column(Integer, index=True)
     word: Mapped[str] = mapped_column(String(255), nullable=False)
     meaning: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
 
@@ -350,10 +364,16 @@ class Fact(Base, TimestampMixin):
     """«Что мы узнали про страну»; a null author means Mila wrote it."""
 
     __tablename__ = "facts"
+    __table_args__ = (
+        # The denormalized season must be the season the week belongs to (NULL week: no check).
+        ForeignKeyConstraint(
+            ["season_id", "week_id"], ["weeks.season_id", "weeks.id"], name="fk_facts_season_id_week_id_weeks"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id"), nullable=False, index=True)
-    week_id: Mapped[int | None] = mapped_column(ForeignKey("weeks.id"), index=True)
+    week_id: Mapped[int | None] = mapped_column(Integer, index=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     author_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(Timestamp)

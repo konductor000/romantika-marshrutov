@@ -38,6 +38,15 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["romantika"]
 
+# The season and tzolkin content is data the running app reads, so it has to travel inside
+# the wheel (the Docker image installs the package, not the repository). It keeps living in
+# `data/` at the root of the repository and lands in `romantika/data/` when built.
+[tool.hatch.build.targets.wheel.force-include]
+"data" = "romantika/data"
+
+[tool.hatch.build.targets.sdist]
+include = ["romantika", "data", "alembic.ini", "Makefile", "tests"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"

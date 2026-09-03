@@ -10,7 +10,17 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data"
+
+
+def _data_dir() -> Path:
+    """Season and tzolkin content: `data/` of a checkout, `romantika/data/` of an installed wheel."""
+    from_repository = PROJECT_ROOT / "data"
+    if from_repository.is_dir():
+        return from_repository
+    return Path(__file__).resolve().parent / "data"
+
+
+DATA_DIR = _data_dir()
 
 
 class Settings(BaseSettings):
