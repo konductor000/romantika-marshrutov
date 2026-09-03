@@ -142,3 +142,32 @@ def _finalize(part: Path, target: Path, expected_size: int | None) -> tuple[str,
         raise TruncatedDownloadError(f"{target.name}: expected {expected_size} bytes, got {size}")
     part.replace(target)
     return digest.hexdigest(), size
+
+
+@dataclass(frozen=True, slots=True)
+class MediaInfo:
+    """What the web layer needs to decide whether it may serve a file."""
+
+    media_id: uuid.UUID
+    path: str
+    mime: str | None
+    owner_id: int
+    downloaded: bool
+    hidden: bool
+
+
+async def describe(session: AsyncSession, media_id: uuid.UUID) -> MediaInfo | None:
+    row = await session.get(models.Media, media_id)
+    if row is None:
+        return None
+    report = await session.get(models.Report, row.report_id)
+    if report is None:
+        return None
+    return MediaInfo(
+        media_id=row.id,
+        path=row.path,
+        mime=row.mime,
+        owner_id=report.user_id,
+        downloaded=row.downloaded_at is not None,
+        hidden=row.hidden_at is not None or report.deleted_at is not None,
+    )

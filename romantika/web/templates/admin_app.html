@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Админка сезона{% endblock %}
+{% block content %}
+<div id="app" class="app admin">
+  <header class="hero compact">
+    <p class="eyebrow">Романтика маршрутов · админка</p>
+    <h1 id="title">Сезон</h1>
+    <p class="muted" id="subtitle">Загружаю…</p>
+  </header>
+  <nav class="tabs" id="tabs" hidden>
+    <button data-tab="weeks" class="active">Недели</button>
+    <button data-tab="people">Участники</button>
+    <button data-tab="summary">Сводка</button>
+    <button data-tab="facts">Факты</button>
+    <button data-tab="audit">Изменения</button>
+  </nav>
+  <section id="weeks" class="tab" hidden></section>
+  <section id="people" class="tab" hidden></section>
+  <section id="summary" class="tab" hidden></section>
+  <section id="facts" class="tab" hidden></section>
+  <section id="audit" class="tab" hidden></section>
+  <p id="error" class="error" hidden></p>
+  <p id="toast" class="toast" hidden></p>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/admin.js" defer></script>{% endblock %}

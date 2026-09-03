@@ -14,7 +14,6 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -112,7 +111,7 @@ def test_init_data_roundtrip_and_tamper() -> None:
     init = build_init_data(TOKEN, {"id": ALICE, "first_name": "Алиса"}, auth_date=int(now.timestamp()))
     user = validate_init_data(init, TOKEN, now=now)
     assert user is not None and user.id == ALICE and user.first_name == "Алиса"
-    assert validate_init_data(init.replace("Алиса", "Боб"), TOKEN, now=now) is None
+    assert validate_init_data(init.replace("1001", "1002"), TOKEN, now=now) is None, "tampered user id"
     assert validate_init_data(init, "999:OTHER", now=now) is None
     assert validate_init_data(init, TOKEN, now=now + timedelta(hours=25)) is None, "auth_date older than 24h"
 

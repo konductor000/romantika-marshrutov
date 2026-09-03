@@ -110,8 +110,19 @@ async def claim(session: AsyncSession, *, now: datetime) -> JobDTO | None:
     return JobDTO(id=row.id, kind=row.kind, payload=dict(row.payload), attempts=row.attempts, run_after=row.run_after)
 
 
-async def finish(session: AsyncSession, job_id: int, *, error: str | None, now: datetime) -> models.JobStatus:
-    """Close a claimed job: done, or queued again with a backoff, or failed for good."""
+async def finish(
+    session: AsyncSession,
+    job_id: int,
+    *,
+    error: str | None,
+    now: datetime,
+    result: dict[str, Any] | None = None,
+) -> models.JobStatus:
+    """Close a claimed job: done, or queued again with a backoff, or failed for good.
+
+    `result` (e.g. the path of a rendered PDF) is merged into the payload so that the
+    requester can find what the job produced.
+    """
     row = await session.get(models.Job, job_id)
     if row is None:
         raise LookupError(f"job {job_id} does not exist")
@@ -120,6 +131,8 @@ async def finish(session: AsyncSession, job_id: int, *, error: str | None, now: 
         row.status = models.JobStatus.DONE.value
         row.finished_at = now
         row.error = None
+        if result:
+            row.payload = {**row.payload, **result}
     else:
         _fail(row, error=error, now=now)
     await session.flush()
@@ -137,3 +150,29 @@ def _fail(row: models.Job, *, error: str, now: datetime) -> None:
         row.status = models.JobStatus.QUEUED.value
         row.run_after = now + backoff_for(row.attempts)
         row.finished_at = None
+
+
+@dataclass(frozen=True, slots=True)
+class JobDetail:
+    id: int
+    kind: str
+    status: str
+    payload: dict[str, Any]
+    attempts: int
+    error: str | None
+    finished_at: datetime | None
+
+
+async def get(session: AsyncSession, job_id: int) -> JobDetail | None:
+    row = await session.get(models.Job, job_id)
+    if row is None:
+        return None
+    return JobDetail(
+        id=row.id,
+        kind=row.kind,
+        status=row.status,
+        payload=dict(row.payload),
+        attempts=row.attempts,
+        error=row.error,
+        finished_at=row.finished_at,
+    )

@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     media_dir: Path = Field(description="MEDIA_DIR: directory holding participant media (required).")
     public_base_url: str = "http://127.0.0.1:8010"
     admin_chat_id: int | None = None
+    bot_username: str = ""
+    channel_url: str = ""
     log_level: str = "INFO"
     env: str = "dev"
     dev_auth_user_id: int | None = None

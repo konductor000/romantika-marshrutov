@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Мой журнал{% endblock %}
+{% block content %}
+<div id="app" class="app">
+  <header class="hero compact">
+    <p class="eyebrow">Романтика маршрутов</p>
+    <h1 id="title">Мой журнал</h1>
+    <p class="muted" id="subtitle">Загружаю…</p>
+  </header>
+  <section id="passport" class="tiles" hidden></section>
+  <nav class="tabs" id="tabs" hidden>
+    <button data-tab="weeks" class="active">Недели</button>
+    <button data-tab="reports">Отчёты</button>
+    <button data-tab="words">Словарь</button>
+    <button data-tab="more">Ещё</button>
+  </nav>
+  <section id="weeks" class="tab" hidden></section>
+  <section id="reports" class="tab" hidden></section>
+  <section id="words" class="tab" hidden></section>
+  <section id="more" class="tab" hidden></section>
+  <p id="error" class="error" hidden></p>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/journal.js" defer></script>{% endblock %}
