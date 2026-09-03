@@ -14,7 +14,7 @@ PROXY="${BUILD_PROXY:-http://172.17.0.1:10809}"
 COMPOSE="docker compose -f docker/compose.yml -f docker/compose.vps.yml --project-directory ."
 
 RSYNC_OPTS=(-az --delete
-  --exclude .git --exclude .venv --exclude data --exclude .env --exclude '.env.*' --exclude legacy
+  --exclude .git --exclude .venv --exclude data/media --exclude data/backups --exclude data/postgres --exclude .env --exclude '.env.*' --exclude legacy
   --exclude __pycache__ --exclude .pytest_cache --exclude .mypy_cache --exclude .ruff_cache
   --exclude '*.sqlite' --exclude journals --exclude .playwright-mcp)
 if [ "${DRY:-0}" = "1" ]; then
