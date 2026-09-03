@@ -13,6 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+
+# macOS + Homebrew: WeasyPrint finds pango/cairo only with this hint (a no-op elsewhere).
+if os.uname().sysname == "Darwin":
+    os.environ.setdefault("DYLD_FALLBACK_LIBRARY_PATH", "/opt/homebrew/lib")
 from collections.abc import AsyncIterator, Iterator
 
 import pytest

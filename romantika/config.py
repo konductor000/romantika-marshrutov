@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     # non-editable install, and participant media would land there instead of on a volume.
     media_dir: Path = Field(description="MEDIA_DIR: directory holding participant media (required).")
     public_base_url: str = "http://127.0.0.1:8010"
+    backups_dir: Path = Path("/backups")
     admin_chat_id: int | None = None
     bot_username: str = ""
     channel_url: str = ""

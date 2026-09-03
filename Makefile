@@ -1,4 +1,6 @@
 .PHONY: check migrate run-web run-bot run-worker
+# macOS + Homebrew: WeasyPrint needs to find pango/cairo (harmless on Linux).
+export DYLD_FALLBACK_LIBRARY_PATH ?= /opt/homebrew/lib
 
 # MEDIA_DIR has no default in the settings (see romantika/config.py) and the run targets do not
 # inject one: an injected value would beat the `.env` a developer wrote (an environment variable

@@ -327,6 +327,27 @@ max 5 attempts; (b) schedulers ticking every 60 s in Moscow time: reminders (Thu
 Sun ≥12:00, deduped by `reminder_log`, catch-up within the same day), nightly
 `backup_status_check` (reads `/backups/last-verify.json`, alerts admin if stale > 8 days or failed).
 
+### 9.1 Worker API (binding; mirrors `tests/acceptance/test_stage5_worker.py`)
+
+- `TelegramGateway` gains `send_message(chat_id, text)` and `send_document(chat_id, path:
+  Path, caption: str | None = None)`; the aiogram adapter implements them.
+- `romantika.worker.runner.run_once(session_factory, *, telegram, media_store, now) -> str | None`
+  claims one job, runs its handler in its own session/transaction, returns the kind.
+  Handlers: `media_download` (MediaStore.download), `journal_pdf` (render → save under
+  `<media_root>/journals/<season_slug>/<user_id>-<YYYYMMDD-HHMMSS>.pdf` → `send_document`),
+  `broadcast` (`{user_ids, text}`).
+- `romantika.worker.schedulers.reminders_tick(session, *, telegram, now, admin_chat=None) -> int`: Thursday
+  ≥ 19:00 and Sunday ≥ 12:00 Moscow, once per day (`reminder_log` key `YYYY-MM-DD:thu` /
+  `:sun`), skipped when setting `reminders_enabled == "off"` or no current week; sends the
+  legacy texts (with the week title / «18:00» deadline) to `summary.reminder_recipients`, then
+  a one-line report to the admin chat. `backup_status_tick(session, *, telegram, backups_dir,
+  now, admin_chat=None) -> str | None`: reads `<backups_dir>/last-verify.json`; alerts the admin when the file
+  is missing, `ok` is false (include the errors), or `checked_at` is older than 8 days; at
+  most one alert per day (reminder_log key `YYYY-MM-DD:backup`).
+- `python -m romantika.worker` loops: job every 2 s, schedulers every 60 s, structured logs.
+- PDF: `romantika.pdf.journal.render_journal_html(view: JournalView) -> str`,
+  `render_journal_pdf(view) -> bytes` (WeasyPrint, DejaVu fonts, photos by absolute path).
+
 ## 10. PDF
 
 `romantika/pdf/journal.py`: `render_journal_html(view: JournalView) -> str` (Jinja) and

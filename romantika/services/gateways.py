@@ -28,3 +28,11 @@ class TelegramGateway(Protocol):
     async def download_file(self, file_path: str, destination: Path) -> None:
         """Write the file to `destination`; the caller creates the parent directory."""
         ...
+
+    async def send_message(self, chat_id: int, text: str) -> None:
+        """Deliver an HTML text; raise when Telegram refused (blocked bot, unknown chat)."""
+        ...
+
+    async def send_document(self, chat_id: int, path: Path, caption: str | None = None) -> None:
+        """Deliver a file from our disk (the PDF journal)."""
+        ...

@@ -78,3 +78,28 @@ async def send(
         except Exception as exc:
             logger.warning("reminder_not_delivered", extra={"user_id": user_id, "error": str(exc)})
     return ReminderResult(sent=sent, total=len(recipients), week_title=week.title)
+
+
+async def mark_sent(session: AsyncSession, key: str, *, now: datetime) -> bool:
+    """Claim a reminder slot (`YYYY-MM-DD:<slug>`); False when it was already claimed today."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from romantika.db import models
+
+    statement = (
+        pg_insert(models.ReminderLog)
+        .values(key=key, sent_at=now, recipients=0, created_at=now)
+        .on_conflict_do_nothing(index_elements=[models.ReminderLog.key])
+    )
+    result = await session.execute(statement)
+    affected = getattr(result, "rowcount", 0)
+    return bool(affected)
+
+
+async def record_recipients(session: AsyncSession, key: str, recipients: int) -> None:
+    from romantika.db import models
+
+    row = await session.get(models.ReminderLog, key)
+    if row is not None:
+        row.recipients = recipients
+        await session.flush()

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Журнал сезона · {{ season.title }} · {{ name }}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm; @bottom-center { content: "Романтика маршрутов · {{ season.title }} · стр. " counter(page); font-size: 9pt; color: #8a8178; } }
+  body { font-family: "DejaVu Sans", "Noto Sans", "Helvetica Neue", Arial, "Noto Color Emoji", "Apple Color Emoji", sans-serif; color: #23201c; font-size: 11pt; line-height: 1.45; }
+  h1 { font-size: 26pt; margin: 0 0 4pt; line-height: 1.1; }
+  h2 { font-size: 15pt; margin: 18pt 0 6pt; border-bottom: 1px solid #e8dfd2; padding-bottom: 3pt; }
+  .eyebrow { font-size: 9pt; letter-spacing: .1em; text-transform: uppercase; color: #8a8178; margin: 0 0 6pt; }
+  .muted { color: #6f675c; }
+  .summary { margin: 10pt 0 0; padding: 10pt 12pt; background: #fbf6ee; border-radius: 8pt; }
+  .grid { display: flex; flex-wrap: wrap; gap: 4pt; margin: 8pt 0 0; }
+  .cell { width: 34pt; height: 34pt; border: 1px solid #e8dfd2; border-radius: 6pt; text-align: center; font-size: 8pt; color: #6f675c; padding-top: 3pt; }
+  .cell .mark { display: block; font-size: 13pt; color: #c8451f; line-height: 1; }
+  .week { margin: 8pt 0; page-break-inside: avoid; }
+  .week .title { font-weight: bold; }
+  .quote { margin: 2pt 0 0 12pt; color: #3c3630; font-style: italic; }
+  .photos { display: flex; flex-wrap: wrap; gap: 6pt; margin-top: 6pt; }
+  .photos img { width: 31%; height: 150pt; object-fit: cover; border-radius: 6pt; }
+  .chips span { display: inline-block; background: #f6d9cd; border-radius: 999pt; padding: 2pt 8pt; margin: 2pt 4pt 2pt 0; font-size: 10pt; }
+  ol, ul { padding-left: 18pt; margin: 4pt 0; }
+  .wish { font-style: italic; padding: 8pt 12pt; border-left: 3px solid #c8451f; margin: 6pt 0; }
+  .footer { margin-top: 24pt; font-size: 9.5pt; color: #6f675c; }
+</style>
+</head>
+<body>
+  <p class="eyebrow">Романтика маршрутов · журнал сезона</p>
+  <h1>{{ season.title }}</h1>
+  <p class="muted">{{ name }} · {{ starts }} — {{ ends }}</p>
+
+  <div class="summary">
+    Пройдено <b>{{ view.weeks|length }}</b> недель из {{ view.weeks_total }}{% if stars %}, со звёздочкой — {{ stars }}{% endif %}.
+    {% if level_name %}Статус: <b>{{ level_name }}</b>.{% endif %}
+    <div class="grid">
+      {% for cell in grid %}<div class="cell" title="{{ cell.title }}"><span class="mark">{{ cell.mark }}</span>{{ cell.number }}</div>{% endfor %}
+    </div>
+  </div>
+
+  <h2>Твои недели</h2>
+  {% if view.weeks %}
+    {% for week in view.weeks %}
+    <div class="week">
+      <div class="title">{{ "★" if week.level.value == "max" else "✓" }} Неделя {{ week.number }} · {{ week.title }}</div>
+      {% if week.quote %}<div class="quote">«{{ week.quote[:600] }}»</div>{% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Пока пусто — здесь появятся твои недели и твои же слова о них.</p>
+  {% endif %}
+
+  {% if photos %}
+  <h2>Твои фотографии</h2>
+  <div class="photos">{% for src in photos %}<img src="{{ src }}" alt="">{% endfor %}</div>
+  {% endif %}
+
+  {% if view.achievements %}
+  <h2>Ачивки</h2>
+  <p class="chips">{% for label in view.achievements %}<span>{{ label }}</span>{% endfor %}</p>
+  {% endif %}
+
+  {% if view.words or view.season_words %}
+  <h2>Словарик сезона</h2>
+  {% if view.season_words %}<ul>{% for w in view.season_words %}<li><b>{{ w.word }}</b>{% if w.word_ru %} · {{ w.word_ru }}{% endif %}{% if w.meaning %} — {{ w.meaning }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% if view.words %}<p class="muted">Твои слова:</p><ul>{% for w in view.words %}<li>{{ w.word }}{% if w.meaning %} — {{ w.meaning }}{% endif %}</li>{% endfor %}</ul>{% endif %}
+  {% endif %}
+
+  {% if view.facts %}
+  <h2>Что мы узнали про {{ season.title_accusative or season.title }}</h2>
+  <ol>{% for fact in view.facts %}<li>{{ fact.text }}</li>{% endfor %}</ol>
+  {% endif %}
+
+  {% if view.wish %}
+  <h2>От Милы</h2>
+  <p class="wish">{{ view.wish }}</p>
+  {% endif %}
+
+  <p class="footer">Это не сертификат об окончании. Это чтобы было видно: три месяца прожиты, а не пролистаны.</p>
+</body>
+</html>
