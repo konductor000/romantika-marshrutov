@@ -197,11 +197,14 @@ async def handle_report(
 
     week = await content.week_by_number(session, season.id, result.week_number)
     assert week is not None
+    # The answer talks about the week's stamp, so it has to name the level the stamp actually
+    # has: a text sent after a photo does not take the star away (DOMAIN §2), and saying
+    # «✅ штамп за неделю» there would tell the participant they had just lost it.
     level = result.stamp_level or result.level
     await safe_send(
         bot,
         chat_id,
-        ru.report_reply(week, result.level, freeze_granted=result.freeze_granted),
+        ru.report_reply(week, level, freeze_granted=result.freeze_granted),
         reply_markup=keyboards.report_buttons(week.number, level, result.report_id),
     )
     await copy_to_admin(

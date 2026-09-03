@@ -381,6 +381,30 @@ Cyrillic. Photos referenced by absolute file paths under MEDIA_DIR (no network).
 - CI: `.github/workflows/ci.yml` — ruff, mypy, pytest with a `postgres:16` service
   (`TEST_DATABASE_URL`).
 
+### 11.1 Ops contract (binding; mirrors `tests/acceptance/test_stage6_ops.py`)
+
+- `romantika.migration.legacy_import.import_legacy(session, *, sqlite_path: Path, season_id:
+  int, media_store, telegram, now) -> ImportReport(legacy_counts: dict[str, int], imported:
+  dict[str, int])` with mapping DOMAIN §9; naive legacy timestamps are Europe/Moscow;
+  `правки_недель` are applied to `weeks` + audit rows; media downloaded via the gateway
+  (file path extension from the Telegram file_path); idempotent by natural keys
+  (reports: user+week+created_at+kind; words: user+word; etc.). CLI wrapper
+  `python -m romantika.migration.legacy_import --sqlite … --season-slug mexico-2026`.
+- `scripts/backup.sh` (bash, `set -euo pipefail`): env `DATABASE_URL` (strip `+asyncpg`),
+  `MEDIA_DIR`, `BACKUP_DIR`, `RETENTION_DAYS` (default 30), optional `TODAY` (YYYY-MM-DD,
+  for tests). Produces `db/romantika-<date>.dump` (`pg_dump -Fc`), `media/<date>/` (rsync
+  `-a --link-dest` against the previous snapshot), `manifest-<date>.json` (`{date, tables:
+  {name: rows}, media_files, media_bytes, dump_sha256}`), deletes dumps/snapshots/manifests
+  older than the retention. Never touches `MEDIA_DIR` itself.
+- `scripts/restore-verify.sh`: env as above + `SCRATCH_DATABASE_URL`; drops/recreates the
+  scratch DB, `pg_restore`s the latest dump, compares row counts with the manifest, verifies
+  sha256 of up to 20 media files of the latest snapshot against the `media` table, writes
+  `last-verify.json` (`{ok, checked_at, dump, tables, media_checked, errors}`), exit 1 on any
+  error.
+- `scripts/mac-pull-backups.sh` + `scripts/launchd/com.romantika.backup-pull.plist`,
+  `scripts/deploy.sh`, `docker/Dockerfile`, `docker/compose.yml`, `docker/compose.vps.yml`,
+  `.github/workflows/ci.yml` as in §11.
+
 ## 12. Testing contract
 
 - `make check` = `uv run ruff check . && uv run ruff format --check . && uv run mypy romantika
