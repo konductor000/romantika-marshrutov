@@ -162,6 +162,9 @@ async def resolve_target(session: AsyncSession, message: Message, argument: str)
     if replied is not None:
         link = await links.lookup(session, admin_chat_id=message.chat.id, admin_message_id=replied.message_id)
         if link is not None:
+            # A nick typed alongside the reply is redundant, not part of the badge text.
+            if argument.startswith("@"):
+                argument = argument.partition(" ")[2].strip()
             return await people.get_user(session, link.user_id), argument
     if argument:
         head, _, rest = argument.partition(" ")

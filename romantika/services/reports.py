@@ -58,6 +58,13 @@ class AcceptResult:
     media_ids: list[uuid.UUID]
 
 
+#: `FixResult.reason` codes. Named here because the bot matches on them to pick the Russian
+#: answer: a literal on either side silently drifts and the participant is told the wrong thing.
+NO_WEEK = "no_week"
+NO_REPORT = "no_report"
+NO_DOWNGRADE = "max_is_not_downgraded"
+
+
 @dataclass(frozen=True, slots=True)
 class FixResult:
     """«Это был максимум/минимум». `reason` is a code; the bot turns it into Russian."""
@@ -188,13 +195,13 @@ async def fix_level(
     """The «это был максимум/минимум» buttons: upgrade only, and only with a report."""
     week = await content.week_by_number(session, season_id, week_number)
     if week is None:
-        return FixResult(ok=False, stamp_level=None, reason="no_week")
+        return FixResult(ok=False, stamp_level=None, reason=NO_WEEK)
 
     current = await stamps.get_level(session, user_id=user_id, week_id=week.id)
     if not await _has_report(session, user_id=user_id, week_id=week.id):
-        return FixResult(ok=False, stamp_level=current, reason="no_report")
+        return FixResult(ok=False, stamp_level=current, reason=NO_REPORT)
     if current is StampLevel.MAX and level is StampLevel.MIN:
-        return FixResult(ok=False, stamp_level=StampLevel.MAX, reason="max_is_not_downgraded")
+        return FixResult(ok=False, stamp_level=StampLevel.MAX, reason=NO_DOWNGRADE)
 
     stamp = await stamps.merge(
         session,

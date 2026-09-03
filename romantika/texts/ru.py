@@ -213,6 +213,8 @@ OUT_OF_WEEK = "Спасибо! Сейчас неделя сезона не ид�
 JOURNAL_NOW = "Так он выглядит сейчас. К {end} здесь будет весь сезон."
 NOT_REPORT_DONE = "Поняла, это не отчёт — штамп пересчитала. Передаю Миле как сообщение."
 NOT_REPORT_FOREIGN = "Этот отчёт не твой, ничего не трогаю."
+NOT_REPORT_ALREADY = "Этот отчёт уже отменён — всё в порядке."
+WEEK_ALREADY_OVER = "Эта неделя уже закончилась — задним числом её не меняем. Правка не сохранена."
 REPLY_DELIVERED = "Отправила ✅"
 REPLY_FAILED = "Не дошло — человек, видимо, заблокировал бота"
 
@@ -305,7 +307,7 @@ def passport_text(view: PassportView, bonus_reasons: list[str]) -> str:
             title = view.stamp_titles.get(week.number) or week.title
             lines.append(f"{mark}  {week.number}. {escape(title)}")
             continue
-        tail = " · заморозка" if state is WeekState.FROZEN else ""
+        tail = {WeekState.FROZEN: " · заморозка", WeekState.BEFORE_JOIN: " · до тебя"}.get(state, "")
         lines.append(f"{marks[state]}  {week.number}. {escape(week.title)}{tail}")
     if locked:
         lines.append(
@@ -400,7 +402,8 @@ def journal_text(view: JournalView, level: Level | None) -> str:
         f"📔 <b>Журнал сезона · {escape(season.title)}</b>",
         f"{escape(name)} · {season.starts_on:%d.%m} — {season.ends_on:%d.%m.%Y}",
         "",
-        f"Пройдено <b>{len(view.weeks)}</b> недель из {view.weeks_total}. Статус: <b>{JOURNAL_LEVEL_NAMES[level]}</b>.",
+        f"Пройдено <b>{len(view.weeks)}</b> {plural(len(view.weeks), 'неделя', 'недели', 'недель')} "
+        f"из {view.weeks_total}. Статус: <b>{JOURNAL_LEVEL_NAMES[level]}</b>.",
     ]
     if view.weeks:
         lines += ["", "───", "<b>Твои недели</b>"]

@@ -49,6 +49,50 @@ async def handle_callback(
     chat_id = query.message.chat.id if query.message is not None else user.id
     parts = data.split(":")
     head = parts[0]
+    try:
+        await _dispatch(
+            parts,
+            head,
+            query,
+            bot,
+            chat_id,
+            session,
+            settings,
+            user,
+            season,
+            is_admin,
+            admin_chat,
+            now,
+            today,
+            telegram,
+        )
+    except (ValueError, KeyError, IndexError) as exc:
+        # Data no keyboard of ours produces (an old client, a forged button): answer, do not crash.
+        logger.warning("callback_malformed", extra={"data": data, "error": str(exc)})
+        await answer(query, "Кнопка устарела — открой экран заново.")
+
+
+async def _dispatch(
+    parts: list[str],
+    head: str,
+    query: CallbackQuery,
+    bot: Bot,
+    chat_id: int,
+    session: AsyncSession,
+    settings: Settings,
+    user: UserDTO,
+    season: SeasonDTO | None,
+    is_admin: bool,
+    admin_chat: int | None,
+    now: datetime,
+    today: date,
+    telegram: TelegramGateway,
+) -> None:
+
+    # A button ends whatever the bot was waiting for (DOMAIN §10.8): otherwise a stale «пиши
+    # письмо» swallows the next real report — no row, no stamp. The handlers that open a new
+    # dialog (addword, addfact, more:write, adm:field, adm:wish) set their state below.
+    await people.clear_dialog_state(session, user.id)
 
     if head == "adm":
         if not is_admin:
@@ -93,7 +137,7 @@ async def handle_callback(
         if result.ok:
             await answer(query, f"Поправила: теперь {ru.level_name(level)}", alert=True)
             await safe_send(bot, chat_id, f"Поправила — засчитано как <b>{ru.level_name(level)}</b>.")
-        elif result.reason == "no_downgrade":
+        elif result.reason == reports.NO_DOWNGRADE:
             await answer(query, "Максимум не понижаю — звёздочка остаётся ⭐", alert=True)
         else:
             await answer(query, "За эту неделю отчёта нет — пришли текст или фото.", alert=True)
@@ -104,7 +148,8 @@ async def handle_callback(
         cancelled = await reports.cancel(session, user_id=user.id, report_id=report_id, now=now)
         await answer(query)
         if not cancelled.ok:
-            await safe_send(bot, chat_id, ru.NOT_REPORT_FOREIGN)
+            already = cancelled.reason == "already_cancelled"
+            await safe_send(bot, chat_id, ru.NOT_REPORT_ALREADY if already else ru.NOT_REPORT_FOREIGN)
             return
         await safe_send(bot, chat_id, ru.NOT_REPORT_DONE, reply_markup=keyboards.main_keyboard(is_admin=is_admin))
         row = await session.get(models.Report, report_id)
@@ -200,7 +245,7 @@ async def handle_admin(
     elif action == "who":
         await admin.send_who(bot, chat_id, session)
     elif action == "remind":
-        await admin.send_reminders_now(bot, chat_id, session, season, telegram, now)  # type: ignore[arg-type]
+        await admin.send_reminders_now(bot, chat_id, session, season, telegram, now)
     elif action == "toggle":
         await admin.toggle_reminders(bot, chat_id, session, settings, with_panel=True)
     elif action == "people" and len(parts) == 3:

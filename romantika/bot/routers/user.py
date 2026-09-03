@@ -240,9 +240,15 @@ async def answer_dialog(
         if week is None:
             await safe_send(bot, chat_id, "Такой недели нет.")
             return
-        updated = await content.update_week(
-            session, actor_id=user.id, week_id=week.id, changes={field: text}, today=today
-        )
+        try:
+            updated = await content.update_week(
+                session, actor_id=user.id, week_id=week.id, changes={field: text}, today=today
+            )
+        except content.ContentError:
+            # The panel never offers a finished week, but the dialog outlives midnight: without
+            # this the whole update transaction would roll back and Mila would get no answer.
+            await safe_send(bot, chat_id, ru.WEEK_ALREADY_OVER)
+            return
         await safe_send(
             bot,
             chat_id,
