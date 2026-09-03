@@ -29,6 +29,8 @@ class PassportView:
     breakdown: Breakdown
     stamps: dict[int, StampLevel]
     """`{week_number: level}` — the stars in the week list."""
+    stamp_titles: dict[int, str]
+    """`{week_number: title}` frozen at award time (DOMAIN §1)."""
     stamps_max: int
     weeks_total: int
     level: Level | None
@@ -58,6 +60,7 @@ async def build(session: AsyncSession, *, season_id: int, user_id: int, today: d
         weeks=weeks,
         breakdown=breakdown,
         stamps=levels,
+        stamp_titles=await stamps.titles_for_user(session, season_id=season_id, user_id=user_id),
         stamps_max=sum(1 for level in levels.values() if level is StampLevel.MAX),
         weeks_total=len(weeks),
         level=rules.level_for(breakdown.stamps, breakdown.freezes_left, season.levels),

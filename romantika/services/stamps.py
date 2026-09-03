@@ -194,3 +194,13 @@ async def for_week(session: AsyncSession, *, season_id: int, week_id: int) -> di
         .order_by(models.Stamp.awarded_at, models.Stamp.id)
     )
     return {user_id: StampLevel(level) for user_id, level in (await session.execute(query)).all()}
+
+
+async def titles_for_user(session: AsyncSession, *, season_id: int, user_id: int) -> dict[int, str]:
+    """`{week_number: week_title_snapshot}` — what the passport shows for stamped weeks."""
+    query = (
+        select(models.Week.number, models.Stamp.week_title_snapshot)
+        .join(models.Week, models.Week.id == models.Stamp.week_id)
+        .where(models.Stamp.season_id == season_id, models.Stamp.user_id == user_id)
+    )
+    return {int(number): str(title) for number, title in (await session.execute(query)).all()}

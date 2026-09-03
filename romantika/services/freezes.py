@@ -115,3 +115,13 @@ async def total(session: AsyncSession, season_id: int, user_id: int) -> int:
         base_freezes=season.base_freezes,
         max_freezes=season.max_freezes,
     )
+
+
+async def reasons(session: AsyncSession, season_id: int, user_id: int) -> list[str]:
+    """Reasons of the earned freezes in the order they were granted (passport footnote)."""
+    query = (
+        select(models.Freeze.reason)
+        .where(models.Freeze.season_id == season_id, models.Freeze.user_id == user_id)
+        .order_by(models.Freeze.created_at, models.Freeze.id)
+    )
+    return [str(reason) for (reason,) in (await session.execute(query)).all()]

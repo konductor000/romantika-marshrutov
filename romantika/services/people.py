@@ -6,6 +6,7 @@ dataclasses — an ORM object handed to a handler would lazy-load after the sess
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -51,6 +52,13 @@ class UserDTO:
         if parts:
             return " ".join(parts)
         return f"@{self.username}" if self.username else str(self.id)
+
+    @property
+    def display_name_with_username(self) -> str:
+        """«Имя (@ник)» — how the admin sees people in lists and headers."""
+        if self.username and self.first_name:
+            return f"{self.display_name} (@{self.username})"
+        return self.display_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,3 +188,39 @@ async def intents(session: AsyncSession, *, season_id: int, week_id: int) -> dic
         models.WeekIntent.season_id == season_id, models.WeekIntent.week_id == week_id
     )
     return {user_id: models.IntentChoice(choice) for user_id, choice in (await session.execute(query)).all()}
+
+
+async def all_users(session: AsyncSession) -> list[UserDTO]:
+    """Everyone who ever wrote to the bot, oldest first (the admin's «кто в боте»)."""
+    query = select(models.User).order_by(models.User.joined_at, models.User.id)
+    return [to_dto(row) for row in (await session.execute(query)).scalars()]
+
+
+async def display_names(session: AsyncSession, user_ids: Sequence[int], *, short: bool = False) -> dict[int, str]:
+    """`{user_id: «Имя (@ник)»}` (or just the name with `short=True`) for the given people."""
+    wanted = sorted({int(user_id) for user_id in user_ids})
+    if not wanted:
+        return {}
+    query = select(models.User).where(models.User.id.in_(wanted))
+    result: dict[int, str] = {}
+    for row in (await session.execute(query)).scalars():
+        dto = to_dto(row)
+        result[dto.id] = dto.display_name if short else dto.display_name_with_username
+    return result
+
+
+async def find(session: AsyncSession, query_text: str) -> UserDTO | None:
+    """By @username or by name: an exact match first, then a unique substring of the name.
+
+    Compared in Python rather than SQL so that Cyrillic case folding works the same
+    everywhere (the legacy bot had the same rule).
+    """
+    needle = query_text.strip().lstrip("@").lower()
+    if not needle:
+        return None
+    rows = [to_dto(row) for row in (await session.execute(select(models.User))).scalars()]
+    for dto in rows:
+        if (dto.username or "").lower() == needle or dto.display_name.lower() == needle:
+            return dto
+    similar = [dto for dto in rows if needle in dto.display_name.lower()]
+    return similar[0] if len(similar) == 1 else None

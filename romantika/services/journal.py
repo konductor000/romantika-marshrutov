@@ -6,7 +6,7 @@ One view model for all three, so the PDF can never say something the bot does no
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 from sqlalchemy import select
@@ -18,7 +18,7 @@ from romantika.services import achievements, content, facts, people, stamps, wis
 from romantika.services.content import SeasonDTO
 from romantika.services.facts import FactDTO
 from romantika.services.people import UserDTO
-from romantika.services.words import UserWord
+from romantika.services.words import UserWord, WeekWord
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +38,7 @@ class JournalMedia:
     media_id: uuid.UUID
     path: str
     downloaded: bool
+    tg_file_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +51,9 @@ class JournalView:
     words: list[UserWord]
     facts: list[FactDTO]
     wish: str | None
+    weeks_total: int = 0
+    season_words: list[WeekWord] = field(default_factory=list)
+    """Words of the weeks that have started, for the «Словарик сезона» block."""
 
 
 async def build(session: AsyncSession, *, season_id: int, user_id: int, today: date) -> JournalView:
@@ -82,6 +86,8 @@ async def build(session: AsyncSession, *, season_id: int, user_id: int, today: d
         words=await words.for_user(session, season_id=season_id, user_id=user_id),
         facts=await facts.list_active(session, season_id),
         wish=await wishes.get_wish(session, season_id, user_id),
+        weeks_total=len(weeks),
+        season_words=(await words.season_dictionary(session, season_id, today=today)).week_words,
     )
 
 
@@ -116,7 +122,7 @@ async def _media(session: AsyncSession, *, season_id: int, user_id: int) -> list
     so the PDF must skip a path that is still only a promise.
     """
     query = (
-        select(models.Media.id, models.Media.path, models.Media.downloaded_at)
+        select(models.Media.id, models.Media.path, models.Media.downloaded_at, models.Media.tg_file_id)
         .join(models.Report, models.Report.id == models.Media.report_id)
         .where(
             models.Report.season_id == season_id,
@@ -128,6 +134,6 @@ async def _media(session: AsyncSession, *, season_id: int, user_id: int) -> list
         .order_by(models.Media.created_at, models.Media.id)
     )
     return [
-        JournalMedia(media_id=media_id, path=path, downloaded=downloaded_at is not None)
-        for media_id, path, downloaded_at in (await session.execute(query)).all()
+        JournalMedia(media_id=media_id, path=path, downloaded=downloaded_at is not None, tg_file_id=tg_file_id)
+        for media_id, path, downloaded_at, tg_file_id in (await session.execute(query)).all()
     ]

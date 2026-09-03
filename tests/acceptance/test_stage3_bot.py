@@ -15,14 +15,22 @@ Contract used here:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import AnswerCallbackQuery, CopyMessage, DeleteWebhook, GetFile, SendMessage, SendPhoto, TelegramMethod
+from aiogram.methods import (
+    AnswerCallbackQuery,
+    CopyMessage,
+    DeleteWebhook,
+    GetFile,
+    SendMessage,
+    SendPhoto,
+    TelegramMethod,
+)
 from aiogram.types import (
     CallbackQuery,
     Chat,
