@@ -17,6 +17,22 @@ router = APIRouter(tags=["public"])
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
 
 
+def _asset_version() -> str:
+    """Short hash of the static files: a changed script gets a new URL, so no stale caches."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    static = Path(__file__).resolve().parent.parent / "static"
+    for path in sorted(static.rglob("*")):
+        if path.is_file():
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:10]
+
+
+templates.env.globals["asset_version"] = _asset_version()
+
+
 def _signs_payload() -> dict[str, object]:
     return {
         "signs": [

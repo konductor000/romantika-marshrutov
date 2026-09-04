@@ -40,5 +40,5 @@
 {% endblock %}
 {% block scripts %}
 <script id="tzolkin-data" type="application/json">{{ payload | tojson }}</script>
-<script src="/static/calendar.js" defer></script>
+<script src="/static/calendar.js?v={{ asset_version }}" defer></script>
 {% endblock %}
