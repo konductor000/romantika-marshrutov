@@ -72,10 +72,19 @@ Nothing in the stack ever deletes media or participant rows; "removal" is a time
    the stack from the repo, copy `.env`, put the dump and the media snapshot in place, follow
    steps 2–4.
 
-## Cut-over from the legacy bot
+## Production bot
 
-The legacy bot runs on Mila's Mac with `данные.sqlite` and the production token. The new stack
-must use the **same** bot (same token), otherwise all Telegram `file_id`s stop working.
+Decision 2026-09-04 (owner): the legacy data is not migrated; production runs on a **new** bot
+`@romantika_marshrutov_club_bot` created in BotFather on Dmitry's account (ownership can be
+transferred to Mila later via BotFather → /mybots → Transfer Ownership). The stack on the VPS
+runs with its token, a clean database and the seeded Mexico season. Bot name, descriptions,
+commands and the menu button are set through the Bot API:
+`rc exec -T bot python -m romantika.ops.telegram_setup` (idempotent, run after every bot change).
+
+## Cut-over from the legacy bot (kept for reference, not used)
+
+The legacy bot runs on Mila's Mac with `данные.sqlite` and the production token. Reusing that
+data requires the **same** bot (same token), otherwise all Telegram `file_id`s stop working.
 
 1. Deploy the stack with the **staging** token first (`@romantika_staging_bot`), check everything.
 2. Ask Mila to stop the legacy bot (`pkill -f бот.py`) and send `данные.sqlite` + the token.
