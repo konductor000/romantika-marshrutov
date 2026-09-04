@@ -13,6 +13,9 @@ Operations guide for the person who runs the stack (English; the owner's guide i
   `host.docker.internal:10809` (see `docker/compose.vps.yml`).
 - Secrets only in `/opt/stacks/romantika/.env` (chmod 600): `BOT_TOKEN`, `ADMIN_IDS`,
   `ADMIN_CHAT_ID`, `POSTGRES_PASSWORD`, `PUBLIC_BASE_URL`, `BOT_USERNAME`, `CHANNEL_URL`.
+- Telegram from the containers goes through `HTTPS_PROXY` (set by `compose.vps.yml`); aiogram
+  reads it via `TELEGRAM_PROXY`/`HTTPS_PROXY` (`romantika/bot/factory.py`, needs `aiohttp-socks`).
+- Season content: `rc exec -T bot python -m romantika.ops.seed --activate` (idempotent).
 
 ## Deploy
 
