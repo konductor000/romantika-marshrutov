@@ -2,6 +2,7 @@
 (async function () {
   const RM = window.RM;
   const esc = RM.escape;
+  const FIELDS = [["title", "Название"], ["intro", "Вступление"], ["task_min", "Минимум"], ["task_max", "Максимум"], ["word", "Слово"], ["word_ru", "Произношение"], ["word_meaning", "Значение слова"]];
   const $ = (id) => document.getElementById(id);
   const fail = (message) => { $("error").textContent = message; $("error").hidden = false; $("subtitle").textContent = ""; };
 
@@ -21,7 +22,6 @@
   renderWeeks();
   $("weeks").hidden = false;
 
-  const FIELDS = [["title", "Название"], ["intro", "Вступление"], ["task_min", "Минимум"], ["task_max", "Максимум"], ["word", "Слово"], ["word_ru", "Произношение"], ["word_meaning", "Значение слова"]];
 
   function renderWeeks() {
     $("weeks").innerHTML = weeks.map((w) => `
