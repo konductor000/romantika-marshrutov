@@ -38,7 +38,7 @@ nice -n 10 $COMPOSE build \
   migrate
 echo "== migrate + up"
 $COMPOSE up -d --remove-orphans
-sleep 8
+sleep 25
 $COMPOSE ps
 echo "== smoke"
 curl -fsS http://127.0.0.1:8010/healthz && echo
