@@ -20,6 +20,7 @@ from romantika.services.errors import Refused
 
 #: The first dash surrounded by spaces, or the first colon, separates word and meaning.
 SEPARATOR = re.compile(r"\s+[—–-]\s+|\s*:\s*")
+LEADING_SEPARATOR = re.compile(r"^[—–:-]\s*")
 
 WORD_LENGTH = 255
 
@@ -64,6 +65,9 @@ class DictionaryView:
 def parse(raw: str) -> tuple[str, str]:
     """«sobremesa — время за столом» → ('sobremesa', 'время за столом'); no separator: no meaning."""
     text = raw.strip()
+    if LEADING_SEPARATOR.match(text):
+        # «— значение» / «: значение»: a meaning without a word
+        return "", LEADING_SEPARATOR.sub("", text, count=1).strip()
     parts = SEPARATOR.split(text, maxsplit=1)
     word = parts[0].strip()
     meaning = parts[1].strip() if len(parts) > 1 else ""

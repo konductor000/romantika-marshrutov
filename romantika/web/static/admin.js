@@ -56,6 +56,11 @@
     const render = { week: renderWeek, people: renderPeople, letters: renderLetters, content: renderContent, facts: renderFacts, more: renderMore }[tab];
     guarded(render, () => go(tab));
   }
+  // A request that failed inside a screen: the message and a retry, in place.
+  function failed(box, e, retry) {
+    box.innerHTML = `<div class="empty"><div class="big">😕</div><h2>Не загрузилось</h2><p class="muted">${esc(e && e.message ? e.message : String(e))}</p><button class="btn soft small" id="retry">Попробовать ещё раз</button></div>`;
+    $("retry").addEventListener("click", retry);
+  }
   // A screen that throws says so and offers a retry instead of leaving a spinner forever.
   function guarded(render, retry) {
     return Promise.resolve().then(render).catch((e) => {
@@ -76,7 +81,7 @@
     screen.innerHTML = `<header class="screen-head"><p class="eyebrow">Сводка недели</p><h1>Неделя</h1></header><label>Какая неделя<select id="week-pick">${weekOptions(pick)}</select></label><div id="week-body">${loading()}</div>`;
     $("week-pick").addEventListener("change", () => { const n = +$("week-pick").value; guarded(() => renderWeek(n), () => renderWeek(n)); });
     let s;
-    try { s = await RM.api("/api/admin/summary?week=" + pick); } catch (e) { $("week-body").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+    try { s = await RM.api("/api/admin/summary?week=" + pick); } catch (e) { failed($("week-body"), e, () => renderWeek(pick)); return; }
     state.week = s;
     $("week-body").innerHTML = `
       <div class="tiles" style="margin-top:12px">
@@ -111,7 +116,7 @@
     screen.innerHTML = `<header class="screen-head"><p class="eyebrow">Участники</p><h1>Люди</h1></header><input id="people-q" placeholder="Найти по имени или нику">
       ${cur ? `<div class="tabs filters" id="people-filters">${PEOPLE_FILTERS.map(([v, l]) => `<button data-f="${v}" class="${state.filter === v ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
       <div id="people-list">${loading()}</div>`;
-    try { state.participants = await RM.api("/api/admin/participants"); } catch (e) { $("people-list").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+    try { state.participants = await RM.api("/api/admin/participants"); } catch (e) { failed($("people-list"), e, renderPeople); return; }
     if (!cur) state.filter = "all"; // the week filters make no sense between weeks, and there is no UI to reset them
     if (!state.participants.length) { $("people-list").innerHTML = `<div class="empty"><div class="big">👋</div><h2>Пока никого</h2><p class="muted">Люди появятся здесь после первого /start в боте.</p></div>`; return; }
     const weekMark = (p) => {

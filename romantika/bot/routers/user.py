@@ -245,7 +245,9 @@ async def answer_dialog(
             )
         else:
             await safe_send(bot, chat_id, ru.FACT_SAVED, reply_markup=keyboard)
-            await common.notify_admin(bot, admin_chat, user, ru.admin_fact_added(author, text))
+            await common.notify_admin(
+                bot, admin_chat, user, ru.admin_fact_added(author, text, week.number if week else None)
+            )
         return
 
     if dialog.state == "edit" and is_admin and season is not None:

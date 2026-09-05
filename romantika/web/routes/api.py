@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy import text as sql_text
 from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.formparsers import MultiPartException
 
 from romantika.db import models
@@ -69,9 +70,14 @@ async def _multipart(request: Request) -> tuple[dict[str, str], dict[str, list[s
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"вместе больше {MAX_REQUEST_BYTES // (1024 * 1024)} МБ")
     try:
         # The parser's own ceilings sit above ours, so the answers a client can hit are ours
-        # (413 «не больше 10 файлов»), and the parser only refuses what is not a form at all.
+        # (413 «не больше 10 файлов»); what the parser itself refuses is answered in Russian too.
         form = await request.form(max_files=MAX_FORM_FILES, max_fields=64)
-    except MultiPartException as exc:
+    except (MultiPartException, StarletteHTTPException) as exc:
+        detail = getattr(exc, "detail", None) or getattr(exc, "message", "")
+        if "Too many files" in str(detail):
+            raise HTTPException(
+                status.HTTP_413_CONTENT_TOO_LARGE, f"не больше {MAX_UPLOAD_FILES} файлов за раз"
+            ) from exc
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "не смогла прочитать отправленное") from exc
     fields: dict[str, str] = {}
     lists: dict[str, list[str]] = {}
@@ -411,6 +417,7 @@ async def edit_report(
         raise HTTPException(status.HTTP_403_FORBIDDEN, ru.NOT_REPORT_FOREIGN)
     if edit_key:
         await _serialise(session, f"{principal.user.id}:edit:{report_id}:{edit_key}")
+        await session.refresh(row)  # the winner of the race may have changed it while we waited
         if await reports.edit_applied(session, report_id=report_id, edit_key=edit_key):
             fresh = await views.report_out(session, report_id, today=today)
             assert fresh is not None
@@ -492,6 +499,8 @@ async def cancel_report(
     now: NowDep,
 ) -> schemas.CancelOut:
     """«Это не отчёт, а сообщение Миле»: the stamp is recomputed, the text goes to Mila."""
+    if await session.get(models.Report, report_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "такого отчёта нет")
     cancelled = await reports.cancel(session, user_id=principal.user.id, report_id=report_id, now=now)
     if not cancelled.ok:
         if cancelled.reason == "already_cancelled":
@@ -691,7 +700,9 @@ async def add_fact(
         session,
         settings,
         principal,
-        ru.admin_fact_added(principal.user.display_name_with_username, body.text.strip()),
+        ru.admin_fact_added(
+            principal.user.display_name_with_username, body.text.strip(), week.number if week else None
+        ),
         now=now,
     )
     return schemas.MessageOut(message=ru.FACT_SAVED)

@@ -507,3 +507,19 @@ async def test_the_app_texts_speak_of_the_app(app: App) -> None:
     assert "пришли сюда" not in home["texts"]["greeting"]
     assert "Записалось не то, что нужно" in home["texts"]["help"]
     assert "в «Журнале»" in home["texts"]["help"]
+
+
+async def test_a_meaning_without_a_word_is_refused(app: App) -> None:
+    r = await app.client.post("/api/words", json={"text": " — значение"}, headers=app.headers(ALICE))
+    assert r.status_code == 422
+
+
+async def test_cancelling_an_unknown_report_is_a_404(app: App) -> None:
+    r = await app.client.post("/api/reports/999999/cancel", headers=app.headers(ALICE))
+    assert r.status_code == 404
+
+
+async def test_too_many_parts_answer_in_russian(app: App) -> None:
+    files = [("files", (f"p{i}.jpg", JPEG, "image/jpeg")) for i in range(45)]
+    r = await app.client.post("/api/reports", files=files, headers=app.headers(ALICE))
+    assert r.status_code == 413 and "файлов" in r.json()["detail"]
