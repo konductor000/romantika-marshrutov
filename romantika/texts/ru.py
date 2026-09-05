@@ -493,7 +493,7 @@ def admin_edit_header(week_number: int, author: str, text: str | None, *, added:
     body = f": {escape(text[:300])}" if text else ""
     tail = f" ({', '.join(changes)})" if changes else ""
     return (
-        f"✏️ {escape(author)} поправил отчёт за неделю {week_number}{tail}{body}"
+        f"✏️ Правка отчёта за неделю {week_number} от {escape(author)}{tail}{body}"
         "\n\n<i>Ответь на это сообщение — я передам ответ автору.</i>"
     )
 

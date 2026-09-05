@@ -8,7 +8,9 @@
   const screen = $("screen"), tabbar = $("tabbar");
   const FIELDS = [["title", "Название", "input"], ["intro", "Вступление", "textarea"], ["task_min", "Минимум", "textarea"], ["task_max", "Максимум", "textarea"], ["word", "Слово недели", "input"], ["word_ru", "Произношение", "input"], ["word_meaning", "Значение слова", "textarea"]];
   const FREEZE_REASONS = [["comment", "💬 За комментарий в канале"], ["meetup", "🤝 За приход на встречу"], ["friend", "🧭 За приведённого друга"], ["manual", "❄️ Просто так"]];
-  const state = { tab: "week", me: null, weeks: [], catalogue: [], participants: [], week: null };
+  const SOURCE = { bot: "из бота", app: "из приложения", out_of_week: "написал между неделями", not_report: "«это не отчёт»" };
+  const PEOPLE_FILTERS = [["all", "Все"], ["nostamp", "Без штампа на неделе"], ["silent", "Взялись и молчат"]];
+  const state = { tab: "week", me: null, weeks: [], catalogue: [], participants: [], week: null, filter: "all", unanswered: 0 };
 
   boot();
 
@@ -30,7 +32,17 @@
     tabbar.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => go(b.dataset.tab)));
     $("sheet-close").addEventListener("click", closeSheet);
     $("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
-    go(location.hash.includes("tab=") ? "week" : "week");
+    refreshBadge();
+    go("week");
+  }
+
+  async function refreshBadge() {
+    try { const r = await RM.api("/api/admin/letters"); setBadge(r.unanswered); } catch (e) { /* the tab still opens */ }
+  }
+  function setBadge(n) {
+    state.unanswered = n;
+    const b = tabbar.querySelector('button[data-tab="letters"] .badge');
+    if (b) { b.textContent = n; b.hidden = !n; }
   }
 
   function fatal(text) { screen.innerHTML = `<div class="empty"><div class="big">🔒</div><h2>Не открылось</h2><p class="muted">${esc(text)}</p></div>`; }
@@ -40,7 +52,7 @@
     tabbar.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     window.scrollTo(0, 0);
     closeSheet();
-    ({ week: renderWeek, people: renderPeople, content: renderContent, facts: renderFacts, more: renderMore })[tab]();
+    ({ week: renderWeek, people: renderPeople, letters: renderLetters, content: renderContent, facts: renderFacts, more: renderMore })[tab]();
   }
   const currentWeek = () => state.weeks.find((w) => w.state === "current");
   const weekOptions = (selected) => state.weeks.map((w) => `<option value="${w.number}" ${w.number === selected ? "selected" : ""}>${w.number}. ${esc(w.title)}${w.state === "current" ? " · идёт" : w.state === "locked" ? " · 🔒" : ""}</option>`).join("");
@@ -65,34 +77,52 @@
       </div>
       <div class="card"><h2>${s.week_number}. ${esc(s.week_title)}</h2>
         <h3>Сдали (${s.submitted.length})</h3>${s.submitted.length ? `<div class="chips">${s.submitted.map((x) => `<span class="chip ${x.level === "max" ? "star" : "ok"}">${x.level === "max" ? "⭐" : "✅"} ${esc(x.name)}</span>`).join("")}</div>` : `<p class="muted">Пока никто.</p>`}
-        <h3>Взялись, но не прислали (${s.took_not_submitted.length})</h3>${s.took_not_submitted_names.length ? `<div class="chips">${s.took_not_submitted_names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div><button class="btn soft small" id="remind" style="margin-top:10px">⏰ Напомнить им сейчас</button>` : `<p class="muted">Таких нет.</p>`}
+        <h3>Взялись, но не прислали (${s.took_not_submitted.length})</h3>${s.took_not_submitted_names.length ? `<div class="chips">${s.took_not_submitted_names.map((n) => `<span class="chip">${esc(n)}</span>`).join("")}</div>${s.week_ended ? `<p class="note" style="margin-top:8px">Неделя прошла — напоминать уже не о чем.</p>` : `<button class="btn soft small" id="remind" style="margin-top:10px">⏰ Напомнить им сейчас</button>`}` : `<p class="muted">Таких нет.</p>`}
         <h3>Взялись (${s.took.length})</h3><p class="muted small">${s.took_names.map(esc).join(", ") || "пока никто"}</p>
       </div>
       <div class="card"><div class="row between"><h2 style="margin:0">Черновик «Привала»</h2><button class="btn soft small" id="copy">Скопировать</button></div><pre class="draft" id="draft" style="margin-top:10px">${esc(s.draft_post)}</pre><p class="note">Готовый текст воскресного поста. Поправь и выложи руками, как обычно.</p></div>`;
-    if ($("remind")) $("remind").addEventListener("click", remindNow);
+    if ($("remind")) $("remind").addEventListener("click", () => remindNow(s.week_number, s.week_title));
     $("copy").addEventListener("click", async () => {
       try { await navigator.clipboard.writeText(s.draft_post); RM.toast("Скопировала"); }
       catch (e) { const r = document.createRange(); r.selectNodeContents($("draft")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); RM.toast("Выдели и скопируй текст"); }
     });
   }
 
-  async function remindNow() {
-    if (!confirm("Отправить напоминание всем, кто взялся и молчит?")) return;
-    try { await RM.api("/api/admin/remind", { method: "POST", body: {} }); RM.toast("Отправляю — бот напишет тебе, сколько ушло"); } catch (e) { RM.toast(e.message); }
+  async function remindNow(weekNumber, weekTitle) {
+    const about = weekNumber ? `за неделю ${weekNumber} «${weekTitle}»` : "за текущую неделю";
+    if (!(await RM.confirm(`Напомнить всем, кто взялся ${about} и ещё не прислал отчёт?`))) return;
+    try { await RM.api("/api/admin/remind", { method: "POST", body: { week_number: weekNumber || null } }); RM.toast("Отправляю — бот напишет тебе, сколько ушло"); }
+    catch (e) { RM.toast(e.status === 409 ? "Эта неделя уже прошла — напоминать не о чем" : e.message, 4000); }
   }
 
   // --- Люди ----------------------------------------------------------------------------
 
   async function renderPeople() {
-    screen.innerHTML = `<header class="screen-head"><p class="eyebrow">Участники</p><h1>Люди</h1></header><input id="people-q" placeholder="Найти по имени или нику"><div id="people-list" style="margin-top:10px">${loading()}</div>`;
+    const cur = currentWeek();
+    screen.innerHTML = `<header class="screen-head"><p class="eyebrow">Участники</p><h1>Люди</h1></header><input id="people-q" placeholder="Найти по имени или нику">
+      ${cur ? `<div class="tabs filters" id="people-filters">${PEOPLE_FILTERS.map(([v, l]) => `<button data-f="${v}" class="${state.filter === v ? "active" : ""}">${l}</button>`).join("")}</div>` : ""}
+      <div id="people-list">${loading()}</div>`;
     try { state.participants = await RM.api("/api/admin/participants"); } catch (e) { $("people-list").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+    const weekMark = (p) => {
+      if (!cur) return "";
+      const stamp = p.week_level === "max" ? "⭐" : p.week_level === "min" ? "✅" : "";
+      const intent = p.week_intent === "take" ? "берусь" : p.week_intent === "try" ? "попробую" : p.week_intent === "skip" ? "мимо" : "";
+      return `<div class="sub">неделя ${cur.number}: ${stamp ? stamp + " сдал" : intent ? intent + " · пока без отчёта" : "молчит"}</div>`;
+    };
     const draw = () => {
       const q = $("people-q").value.trim().toLowerCase();
-      const rows = state.participants.filter((p) => !q || name(p).toLowerCase().includes(q));
-      $("people-list").innerHTML = rows.length ? `<p class="muted small">${rows.length} ${RM.plural(rows.length, "человек", "человека", "человек")} · нажми, чтобы открыть</p><ul class="list">${rows.map((p) => `<li data-id="${p.id}" style="cursor:pointer"><span class="body"><div class="person-row"><div class="avatar">${esc(initials(p))}</div><div><div class="name">${esc(name(p))}</div><div class="sub">${esc(RM.levelName[p.level] || "ещё в пути")} · заморозок ${p.freezes_left}/${p.freezes_total}</div></div><div class="stats">${p.stamps} ${RM.plural(p.stamps, "штамп", "штампа", "штампов")}${p.stamps_max ? ` · ⭐ ${p.stamps_max}` : ""}<br>цепочка ${p.current_streak} / ${p.best_streak}</div></div></span></li>`).join("")}</ul>` : `<p class="muted">Никого не нашла.</p>`;
+      const rows = state.participants.filter((p) => (!q || name(p).toLowerCase().includes(q)) && passes(p));
+      const total = state.participants.length;
+      $("people-list").innerHTML = rows.length ? `<p class="muted small">${rows.length === total ? `${total} ${RM.plural(total, "человек", "человека", "человек")}` : `${rows.length} из ${total}`} · нажми, чтобы открыть</p><ul class="list">${rows.map((p) => `<li data-id="${p.id}" style="cursor:pointer"><span class="body"><div class="person-row"><div class="avatar">${esc(initials(p))}</div><div><div class="name">${esc(name(p))}</div><div class="sub">${esc(RM.levelName[p.level] || "ещё в пути")} · заморозок ${p.freezes_left}/${p.freezes_total}</div>${weekMark(p)}</div><div class="stats">${p.stamps} ${RM.plural(p.stamps, "штамп", "штампа", "штампов")}${p.stamps_max ? ` · ⭐ ${p.stamps_max}` : ""}<br>цепочка ${p.current_streak} / ${p.best_streak}</div></div></span></li>`).join("")}</ul>` : `<p class="muted">${q ? "Никого не нашла." : state.filter === "silent" ? "Все, кто взялся, уже прислали отчёт." : "Все со штампом — редкая неделя."}</p>`;
       $("people-list").querySelectorAll("li[data-id]").forEach((li) => li.addEventListener("click", () => openPerson(+li.dataset.id)));
     };
+    const passes = (p) => state.filter === "nostamp" ? !p.week_level : state.filter === "silent" ? (p.week_intent === "take" || p.week_intent === "try") && !p.week_level : true;
     $("people-q").addEventListener("input", draw);
+    if ($("people-filters")) $("people-filters").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+      state.filter = b.dataset.f;
+      $("people-filters").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+      draw();
+    }));
     draw();
   }
   function name(p) { return ([p.first_name, p.last_name].filter(Boolean).join(" ") + (p.username ? " (@" + p.username + ")" : "")) || String(p.id); }
@@ -110,7 +140,8 @@
         <div class="tile"><div class="big">${esc(RM.levelName[p.level] || "—")}</div><div class="label">статус · цепочка ${p.current_streak}/${p.best_streak}</div></div>
       </div>
       <div class="card"><h3 style="margin-top:0">Штампы по неделям</h3><div class="stampbar">${d.weeks.map((w) => `<button data-week="${w.number}" class="${w.level || ""}" title="${esc(w.title)}">${w.number} ${w.state === "stamped" ? (w.level === "max" ? "⭐" : "✅") : (RM.stateMark[w.state] || "·")}</button>`).join("")}</div>
-        <p class="note">Нажатие переключает: нет → минимум → максимум → нет. Это ручной штамп: отчёты его не перебивают.</p></div>
+        <div id="stamp-pick" hidden></div>
+        <p class="note">Нажми на неделю и выбери штамп. Ручной штамп важнее автоматического: отчёты его не перебивают.</p></div>
       <div class="card"><h3 style="margin-top:0">Заморозка · осталось ${p.freezes_left} из ${p.freezes_total}</h3>
         ${p.freeze_reasons.length ? `<p class="muted small">Заработано: ${p.freeze_reasons.map((r) => esc(RM.freezeReason[r] || r)).join(", ")}</p>` : ""}
         <div class="stack"><select id="freeze-reason">${FREEZE_REASONS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select><input id="freeze-note" placeholder="Заметка (необязательно)"><button class="btn small" id="freeze-btn">❄️ Дать заморозку</button></div></div>
@@ -120,13 +151,23 @@
       <div class="card"><h3 style="margin-top:0">Пожелание в журнал</h3><p class="note">Несколько слов лично от тебя — попадут в PDF-журнал в конце сезона.</p><textarea id="wish">${esc(d.wish || "")}</textarea><button class="btn small" id="wish-btn" style="margin-top:8px">Сохранить</button></div>
       <div class="card"><h3 style="margin-top:0">Написать в бота</h3><p class="note">Придёт как «Мила ответила на твой отчёт». Ответить реплаем на отчёт в своём чате — то же самое.</p><textarea id="msg"></textarea><button class="btn small" id="msg-btn" style="margin-top:8px">Отправить</button></div>
       <h3>Отчёты (${d.reports.length})</h3>
-      ${d.reports.map((r) => `<article class="report"><div class="meta">${r.week_number ? "Неделя " + r.week_number : "вне недели"} · ${RM.fmtDateTime(r.created_at)} · ${r.level === "max" ? "⭐" : "✅"} ${esc(r.kind)}</div>${r.text ? `<div class="text">${esc(r.text)}</div>` : ""}${r.media.length ? `<div class="gallery">${r.media.map((m) => m.mime && m.mime.startsWith("image/") && m.downloaded ? `<a href="${m.url}" target="_blank"><img src="${m.url}" alt="" loading="lazy"></a>` : (m.downloaded ? `<a class="btn ghost small" href="${m.url}" target="_blank">файл</a>` : `<span class="muted small">файл ещё не скачан</span>`)).join("")}</div>` : ""}</article>`).join("") || '<p class="muted">Отчётов нет.</p>'}
+      ${d.reports.map((r) => `<article class="report"><div class="meta">${r.week_number ? "Неделя " + r.week_number : "вне недели"} · ${RM.fmtDateTime(r.created_at)} · ${r.level === "max" ? "⭐" : "✅"} ${esc(r.kind)}${r.edited_at ? ` · <span class="edited">изменено ${RM.fmtDateTime(r.edited_at)}</span>` : ""}</div>${r.text ? `<div class="text">${esc(r.text)}</div>` : ""}${r.media.length ? `<div class="gallery">${r.media.map((m) => m.mime && m.mime.startsWith("image/") && m.downloaded ? `<a href="${m.url}" target="_blank"><img src="${m.url}" alt="" loading="lazy"></a>` : (m.downloaded ? `<a class="btn ghost small" href="${m.url}" target="_blank">файл</a>` : `<span class="muted small">файл ещё не скачан</span>`)).join("")}</div>` : ""}</article>`).join("") || '<p class="muted">Отчётов нет.</p>'}
       ${d.words.length ? `<h3>Слова</h3><div class="chips">${d.words.map((w) => `<span class="chip">${esc(w.word)}${w.meaning ? " — " + esc(w.meaning) : ""}</span>`).join("")}</div>` : ""}`;
     const body = $("sheet-body");
-    body.querySelectorAll(".stampbar button").forEach((b) => b.addEventListener("click", async () => {
+    body.querySelectorAll(".stampbar button").forEach((b) => b.addEventListener("click", () => {
       const week = d.weeks.find((w) => String(w.number) === b.dataset.week);
-      const next = week.state !== "stamped" ? "min" : week.level === "min" ? "max" : null;
-      try { await RM.api(`/api/admin/participants/${id}/stamps/${week.number}`, { method: "PUT", body: { level: next } }); RM.toast(next ? "Штамп: " + (next === "max" ? "максимум ⭐" : "минимум ✅") : "Штамп снят"); openPerson(id); } catch (e) { RM.toast(e.message); }
+      const current = week.state === "stamped" ? week.level : null;
+      body.querySelectorAll(".stampbar button").forEach((x) => x.classList.toggle("picked", x === b));
+      const pick = $("stamp-pick");
+      pick.hidden = false;
+      pick.innerHTML = `<p class="muted small" style="margin:8px 0 4px">Неделя ${week.number} · ${esc(week.title)} · сейчас ${current === "max" ? "⭐ максимум" : current === "min" ? "✅ минимум" : "без штампа"}</p>
+        <div class="segment" style="margin-top:0">${[["", "Нет"], ["min", "✅ Минимум"], ["max", "⭐ Максимум"]].map(([v, l]) => `<button data-level="${v}" class="${(current || "") === v ? "active" : ""}">${l}</button>`).join("")}</div>`;
+      pick.querySelectorAll("button").forEach((x) => x.addEventListener("click", async () => {
+        const level = x.dataset.level || null;
+        if (level === current) return;
+        if (!level && !(await RM.confirm(`Снять штамп за неделю ${week.number} у ${name(d.user)}? Цепочка и статус пересчитаются.`))) return;
+        try { await RM.api(`/api/admin/participants/${id}/stamps/${week.number}`, { method: "PUT", body: { level } }); RM.haptic("success"); RM.toast(level ? "Штамп: " + (level === "max" ? "максимум ⭐" : "минимум ✅") : "Штамп снят"); openPerson(id); } catch (e) { RM.toast(e.message); }
+      }));
     }));
     $("freeze-btn").addEventListener("click", async () => {
       try { const r = await RM.api(`/api/admin/participants/${id}/freezes`, { method: "POST", body: { reason: $("freeze-reason").value, note: $("freeze-note").value.trim() || null } }); RM.toast(r.granted ? `Выдала, всего ${r.freezes_total}` : "Уже потолок — пять"); openPerson(id); } catch (e) { RM.toast(e.message); }
@@ -145,6 +186,31 @@
       if (!text) return RM.toast("Напиши текст");
       try { await RM.api(`/api/admin/participants/${id}/message`, { method: "POST", body: { text } }); $("msg").value = ""; RM.toast("Отправляю через бота"); } catch (e) { RM.toast(e.message); }
     });
+  }
+
+  // --- Письма: всё, что пришло не отчётом ----------------------------------------------
+
+  async function renderLetters() {
+    screen.innerHTML = `<header class="screen-head"><p class="eyebrow">Входящие</p><h1>Письма</h1><p class="muted">«Написать Миле» из бота и приложения, сообщения между неделями и то, что человек пометил «это не отчёт». Ответ уходит в бота от твоего имени.</p></header><div id="letters-list">${loading()}</div>`;
+    let r;
+    try { r = await RM.api("/api/admin/letters"); } catch (e) { $("letters-list").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
+    setBadge(r.unanswered);
+    if (!r.letters.length) { $("letters-list").innerHTML = `<div class="empty"><div class="big">✉️</div><h2>Писем пока нет</h2><p class="muted">Здесь появится всё, что участники пришлют не как отчёт.</p></div>`; return; }
+    $("letters-list").innerHTML = r.letters.map((l) => `<article class="letter ${l.replied_at ? "answered" : ""}" id="letter-${l.id}">
+        <div class="meta"><b>${esc(l.author)}</b> · ${RM.fmtDateTime(l.created_at)} · ${SOURCE[l.source] || esc(l.source)}</div>
+        <div class="text">${esc(l.text) || '<span class="muted">без текста — только файл</span>'}</div>
+        ${l.replied_at ? `<div class="reply"><div class="meta">Ты ответила · ${RM.fmtDateTime(l.replied_at)}</div>${esc(l.reply_text || "")}</div>` : `<div class="row" style="margin-top:8px"><button class="btn soft small" data-reply="${l.id}">Ответить</button><a class="btn link small" href="#" data-person="${l.user_id}">Открыть участника</a></div><div class="replybox" hidden><textarea placeholder="Ответ уйдёт в бота как «Мила ответила»"></textarea><button class="btn small" data-send="${l.id}" style="margin-top:8px">Отправить</button></div>`}
+      </article>`).join("");
+    const list = $("letters-list");
+    list.querySelectorAll("[data-reply]").forEach((b) => b.addEventListener("click", () => { const box = b.closest(".letter").querySelector(".replybox"); box.hidden = !box.hidden; if (!box.hidden) box.querySelector("textarea").focus(); }));
+    list.querySelectorAll("[data-person]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); openPerson(+a.dataset.person); }));
+    list.querySelectorAll("[data-send]").forEach((b) => b.addEventListener("click", async () => {
+      const text = b.closest(".replybox").querySelector("textarea").value.trim();
+      if (!text) return RM.toast("Напиши ответ");
+      b.disabled = true;
+      try { await RM.api(`/api/admin/letters/${b.dataset.send}/reply`, { method: "POST", body: { text } }); RM.haptic("success"); RM.toast("Отправляю через бота"); renderLetters(); }
+      catch (e) { b.disabled = false; RM.toast(e.message); }
+    }));
   }
 
   // --- Задания: тексты недель ---------------------------------------------------------
@@ -190,13 +256,16 @@
       <div class="card"><div class="row between"><h2 style="margin:0">Автонапоминания</h2><label class="toggle"><input type="checkbox" id="rem-toggle"> <span id="rem-state">…</span></label></div>
         <p class="note">Четверг 19:00 («впереди выходные») и воскресенье 12:00 («сегодня до 18:00»). Уходят только тем, кто нажал «Берусь» или «Попробую» и ещё не прислал отчёт. Нажавшим «В этот раз мимо» — ничего.</p>
         <button class="btn soft small" id="remind-now">⏰ Напомнить сейчас</button></div>
+      <a class="card tight linkcard" href="#" id="open-facts"><div class="row between"><div><b>💡 Факты про страну</b><div class="muted small">Что мы узнали за сезон — общий список для журналов.</div></div><span class="muted">›</span></div></a>
       <details class="card"><summary>Как всё устроено</summary><div class="content helptext">
         <b>Отчёты</b> Человек присылает боту текст или фото — или отправляет их из приложения. Текст = минимум ✅, фото или видео = максимум ⭐. Копия приходит тебе в чат с шапкой «📨 Отчёт за неделю N от…»; ответь на неё реплаем — бот передаст автору.
         <b>Штампы</b> Ставятся сами по первому отчёту недели и никогда не понижаются (кроме «это не отчёт»). Ручной штамп ставишь во вкладке «Люди»; он важнее автоматического.
         <b>Заморозки</b> Две базовые, до пяти. Пропущенная неделя тратит одну сама. За слово в словарике и за первый максимум бот выдаёт сам; за комментарий, встречу и друга — ты, во вкладке «Люди».
         <b>Задания</b> Тексты недели правятся во вкладке «Задания» и появляются в боте сразу. Прошедшие недели закрыты.
         <b>Сводка</b> Вкладка «Неделя»: кто взялся, кто сдал, ядро (две недели подряд) и черновик «Привала».
-        <b>Журналы</b> Каждый собирает свой PDF в приложении (кнопка «Собрать»); ты можешь заранее написать пожелание во вкладке «Люди».
+        <b>Письма</b> Вкладка «Письма»: всё, что пришло не отчётом. Ответ отсюда или реплаем в чате — одно и то же, письмо помечается отвеченным.
+        <b>Правки</b> Пока неделя идёт, человек может поправить свой отчёт в приложении: текст и файлы. Тебе приходит новая версия с пометкой «поправил», штамп пересчитывается по правилам отчётов.
+        <b>Журналы</b> Каждый может собрать свой PDF в приложении в любой момент; на следующий день после конца сезона бот сам разошлёт журналы всем, у кого есть хоть один штамп. Пожелание в журнал пишется во вкладке «Люди».
         <b>Изменения</b> Всё, что ты меняешь здесь или в боте, записывается ниже: кто, что, когда, что было и что стало. Ничего не удаляется — только скрывается.
       </div></details>
       <details class="card" id="audit-box"><summary>Изменения</summary><div class="content" id="audit">${loading()}</div></details>
@@ -210,7 +279,8 @@
       try { const r = await RM.api("/api/admin/reminders", { method: "PUT", body: { enabled: $("rem-toggle").checked } }); $("rem-state").textContent = r.enabled ? "вкл" : "выкл"; RM.toast(r.enabled ? "Автонапоминания включены" : "Автонапоминания выключены"); }
       catch (e) { RM.toast(e.message); }
     });
-    $("remind-now").addEventListener("click", remindNow);
+    $("remind-now").addEventListener("click", () => { const cur = currentWeek(); remindNow(cur && cur.number, cur && cur.title); });
+    $("open-facts").addEventListener("click", (e) => { e.preventDefault(); go("facts"); });
     $("audit-box").addEventListener("toggle", loadAudit, { once: true });
   }
 
@@ -220,7 +290,7 @@
     $("audit").innerHTML = rows.length ? rows.map((r) => `<div class="audit-row" style="padding:8px 0;border-bottom:1px solid var(--line)"><div><b>${esc(auditAction(r))}</b> <span class="muted">· ${RM.fmtDateTime(r.created_at)}</span></div><div class="diff">${diff(r.before, r.after)}</div></div>`).join("") : `<p class="muted">Изменений пока нет.</p>`;
   }
   function auditAction(r) {
-    const names = { "week.update": "Неделя изменена", "stamp.set": "Штамп поставлен вручную", "stamp.override": "Штамп изменён вручную", "fact.delete": "Факт убран", "season.activate": "Сезон активирован" };
+    const names = { "week.update": "Неделя изменена", "stamp.set": "Штамп поставлен вручную", "stamp.override": "Штамп изменён вручную", "fact.delete": "Факт убран", "season.activate": "Сезон активирован", "report.edit": "Участник поправил отчёт", "wish.set": "Пожелание записано" };
     const key = r.entity + "." + r.action;
     return (names[key] || key) + (r.entity_id ? ` · ${r.entity} ${r.entity_id}` : "");
   }

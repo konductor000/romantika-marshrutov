@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     bot_username: str = ""
     # aiohttp ignores HTTPS_PROXY; the bot/worker pass this explicitly (TELEGRAM_PROXY or HTTPS_PROXY).
     telegram_proxy: str = Field(default="", validation_alias=AliasChoices("TELEGRAM_PROXY", "HTTPS_PROXY"))
+    #: Bot API base for the local stand (`python -m romantika.ops.fake_telegram`); empty = api.telegram.org.
+    telegram_api_base: str = ""
     channel_url: str = ""
     log_level: str = "INFO"
     env: str = "dev"

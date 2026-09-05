@@ -15,3 +15,4 @@ data/postgres/
 journals/
 .DS_Store
 legacy/бот/__pycache__/
+.dev/

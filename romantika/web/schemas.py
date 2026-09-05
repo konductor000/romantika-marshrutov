@@ -218,6 +218,8 @@ class SummaryOut(BaseModel):
     core_best: int
     core_current: int
     draft_post: str
+    week_ended: bool = False
+    """True once the week's last day is behind: no reminder can be sent about it (D1)."""
 
 
 class AuditOut(BaseModel):

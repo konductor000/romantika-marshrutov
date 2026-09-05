@@ -246,7 +246,9 @@ async def week_summary(
     except content.ContentError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     names = await people.display_names(session, report.took + list(report.submitted))
+    week_row = await content.week_by_number(session, season.id, week)
     return schemas.SummaryOut(
+        week_ended=week_row is not None and week_row.ends_on < today,
         week_number=report.week_number,
         week_title=report.week_title,
         members_total=report.members_total,

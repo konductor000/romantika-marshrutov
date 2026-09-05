@@ -40,10 +40,10 @@
   };
 
   // Uploads go through XHR for the progress bar; same headers, same error shape.
-  RM.upload = function (path, formData, onProgress) {
+  RM.upload = function (path, formData, onProgress, method) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open("POST", path);
+      xhr.open(method || "POST", path);
       xhr.setRequestHeader("X-Telegram-Init-Data", RM.initData());
       xhr.withCredentials = true;
       if (xhr.upload && onProgress) xhr.upload.addEventListener("progress", (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); });
@@ -120,6 +120,18 @@
   RM.alert = function (text) {
     try { if (tg && tg.showAlert) return tg.showAlert(text); } catch (e) { /* fall through */ }
     RM.toast(text, 4000);
+  };
+  // Telegram's own dialog inside the client, the browser's outside; resolves to true/false.
+  RM.confirm = function (text) {
+    return new Promise((resolve) => {
+      try { if (tg && tg.showConfirm) return tg.showConfirm(text, (ok) => resolve(!!ok)); } catch (e) { /* fall through */ }
+      resolve(window.confirm(text));
+    });
+  };
+  // One id per attempt to send: the API answers a retry with the report it already made.
+  RM.uid = function () {
+    try { if (crypto.randomUUID) return crypto.randomUUID(); } catch (e) { /* older WebView */ }
+    return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
   };
 
   // Back button: pages with history (the calendar opened from the app) go back with Telegram's

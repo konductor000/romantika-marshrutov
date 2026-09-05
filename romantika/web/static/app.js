@@ -6,7 +6,8 @@
   const esc = RM.escape, html = RM.html, fmt = RM.fmtDate;
   const $ = (id) => document.getElementById(id);
   const app = $("app"), screen = $("screen"), tabbar = $("tabbar");
-  const state = { tab: app.dataset.tab || "today", home: null, journal: null, dictionary: null, facts: null, files: [], sent: null };
+  const MAX_FILES = 10, MAX_BYTES = 50 * 1024 * 1024; // the API's limits (routes/api.py), checked here first
+  const state = { tab: app.dataset.tab || "today", home: null, journal: null, dictionary: null, facts: null, files: [], clientId: null, sent: null };
 
   boot();
 
@@ -85,7 +86,7 @@
       out += `<div class="card composer" id="composer">${composerHtml(null)}</div>`;
     }
 
-    out += dayCard(t);
+    out += dayCard(t, !w);
     screen.innerHTML = out;
 
     if (w) bindIntent(w);
@@ -94,12 +95,12 @@
 
   function capital(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
-  function dayCard(t) {
-    if (!t.tzolkin && !t.word && !t.memory) return "";
+  function dayCard(t, withWord) {
+    if (!t.tzolkin && !(withWord && t.word) && !t.memory) return "";
     const tz = t.tzolkin;
     return `<div class="card day tight">
       ${tz ? `<div class="row between"><b>🌤 ${tz.number} ${esc(tz.sign_name)} ${esc(tz.sign_symbol)}</b>${t.calendar_url ? `<a class="btn link small" href="${esc(t.calendar_url)}" id="calendar-link">Календарь →</a>` : ""}</div><p class="advice">${esc(tz.day_advice)}</p>` : ""}
-      ${t.word ? `<div class="kv"><div><div class="k">Слово недели</div><div class="wordline">${esc(t.word.word)}${t.word.word_ru ? ` <span class="ru">· ${esc(t.word.word_ru)}</span>` : ""}</div>${t.word.meaning ? `<div class="muted"><i>${esc(t.word.meaning)}</i></div>` : ""}</div></div>` : ""}
+      ${withWord && t.word ? `<div class="kv"><div><div class="k">Слово недели</div><div class="wordline">${esc(t.word.word)}${t.word.word_ru ? ` <span class="ru">· ${esc(t.word.word_ru)}</span>` : ""}</div>${t.word.meaning ? `<div class="muted"><i>${esc(t.word.meaning)}</i></div>` : ""}</div></div>` : ""}
       ${t.memory ? `<div class="kv" style="margin-top:8px"><div><div class="k">А помнишь?</div><div class="wordline">${esc(t.memory.word)}${t.memory.word_ru ? ` <span class="ru">· ${esc(t.memory.word_ru)}</span>` : ""}</div>${t.memory.meaning ? `<div class="muted"><i>${esc(t.memory.meaning)}</i></div>` : ""}</div></div>` : ""}
       ${t.note ? `<p class="note" style="margin:10px 0 0"><i>${esc(t.note)}</i></p>` : ""}
     </div>`;
@@ -150,26 +151,36 @@
 
   function bindComposer(w) {
     state.files = [];
+    state.clientId = RM.uid(); // one id per attempt: a retry after a lost answer finds the same report
     const input = $("report-files");
-    input.addEventListener("change", () => {
-      for (const f of input.files) if (state.files.length < 10) state.files.push(f);
-      input.value = "";
-      renderPreviews();
-    });
+    input.addEventListener("change", () => { addFiles(state.files, input.files, 0); input.value = ""; renderPreviews(state.files, $("previews"), $("files-count")); });
     $("send").addEventListener("click", () => sendReport(w));
   }
 
-  function renderPreviews() {
-    const box = $("previews");
-    box.hidden = state.files.length === 0;
-    $("files-count").textContent = state.files.length ? `${state.files.length} ${RM.plural(state.files.length, "файл", "файла", "файлов")}` : "";
-    box.innerHTML = state.files.map((f, i) => {
+  // Adds what fits within the API's limits and says what did not (D4). `taken` counts files
+  // already on the report when editing.
+  function addFiles(list, picked, taken) {
+    let bytes = list.reduce((n, f) => n + f.size, 0), refused = [];
+    for (const f of picked) {
+      if (list.length + taken >= MAX_FILES) { refused.push("больше " + MAX_FILES + " файлов в одном отчёте нельзя"); break; }
+      if (f.size > MAX_BYTES) { refused.push(`«${f.name}» больше 50 МБ`); continue; }
+      if (bytes + f.size > MAX_BYTES) { refused.push("вместе получается больше 50 МБ"); continue; }
+      list.push(f); bytes += f.size;
+    }
+    if (refused.length) RM.toast("Не добавила: " + [...new Set(refused)].join("; ") + ". Остальное — следующим отчётом.", 4500);
+  }
+
+  function renderPreviews(list, box, counter) {
+    box.hidden = list.length === 0;
+    if (counter) counter.textContent = list.length ? `${list.length} ${RM.plural(list.length, "файл", "файла", "файлов")} · ${mb(list.reduce((n, f) => n + f.size, 0))}` : "";
+    box.innerHTML = list.map((f, i) => {
       const url = URL.createObjectURL(f);
       const media = f.type.startsWith("image/") ? `<img src="${url}" alt="">` : f.type.startsWith("video/") ? `<video src="${url}" muted></video>` : esc(f.name);
       return `<div class="pv">${media}<button class="x" data-i="${i}" aria-label="Убрать">✕</button></div>`;
     }).join("");
-    box.querySelectorAll(".x").forEach((b) => b.addEventListener("click", () => { state.files.splice(+b.dataset.i, 1); renderPreviews(); }));
+    box.querySelectorAll(".x").forEach((b) => b.addEventListener("click", () => { list.splice(+b.dataset.i, 1); renderPreviews(list, box, counter); }));
   }
+  function mb(bytes) { return bytes < 1024 * 1024 ? Math.max(1, Math.round(bytes / 1024)) + " КБ" : (bytes / 1024 / 1024).toFixed(bytes > 10 * 1024 * 1024 ? 0 : 1) + " МБ"; }
 
   async function sendReport(w) {
     const text = $("report-text").value.trim();
@@ -179,42 +190,55 @@
     button.textContent = "Отправляю…";
     const form = new FormData();
     form.append("text", text);
+    form.append("client_id", state.clientId);
     state.files.forEach((f) => form.append("files", f, f.name));
     if (state.files.length) bar.hidden = false;
     try {
       const r = await RM.upload("/api/reports", form, (p) => { bar.querySelector("i").style.width = Math.round(p * 100) + "%"; });
       RM.haptic("success");
       state.sent = r;
+      state.clientId = RM.uid();
       await refreshHome();
       showResult(r);
     } catch (e) {
       RM.haptic("error");
       button.disabled = false;
-      button.textContent = "Отправить";
+      button.textContent = "Отправить ещё раз";
       bar.hidden = true;
-      RM.toast("Не отправилось: " + e.message, 4000);
+      RM.toast("Не отправилось: " + e.message + ". Нажми ещё раз — второго отчёта не будет.", 4500);
     }
   }
 
   function showResult(r) {
     const box = $("composer");
     const w = state.home.week;
-    const other = r.stamp_level === "max" ? "min" : "max";
-    box.innerHTML = `<div class="row between"><h2 style="margin:0">${r.out_of_week ? "Передала" : "Принято"}</h2>${stampChip(w)}</div>
+    // A stamp never goes down (DOMAIN §2), so the only correction offered is upwards.
+    const canRaise = !r.out_of_week && r.stamp_level === "min";
+    box.innerHTML = `<div class="row between"><h2 style="margin:0">${r.out_of_week ? "Передала Миле" : "Принято"}</h2>${stampChip(w)}</div>
       <div class="result ${r.out_of_week ? "" : "ok"}"><div class="rich">${html(r.message)}</div></div>
       <div class="row" style="margin-top:12px">
-        ${!r.out_of_week ? `<button class="btn soft small" id="fix-level">Это был ${other === "max" ? "максимум" : "минимум"}</button>` : ""}
-        <button class="btn ghost small" id="not-report">✉️ Это не отчёт, а сообщение Миле</button>
+        ${canRaise ? `<button class="btn soft small" id="fix-level">⭐ Это был максимум</button>` : ""}
+        ${!r.out_of_week ? `<button class="btn soft small" id="edit-sent">✏️ Поправить</button>` : ""}
+        <button class="btn ghost small" id="not-report">Это не отчёт</button>
       </div>
-      <button class="btn link" id="again" style="margin-top:8px">Отправить ещё</button>`;
+      <p class="note" style="margin:8px 0 0">${r.out_of_week ? "Ответ придёт в чат с ботом." : "Поправить текст и фото можно до конца недели — в «Журнале» тоже."}</p>
+      <button class="btn link" id="again" style="margin-top:4px">Отправить ещё один</button>`;
     if ($("fix-level")) $("fix-level").addEventListener("click", async () => {
       try {
-        const res = await RM.api(`/api/weeks/${r.week_number}/level`, { method: "POST", body: { level: other } });
+        const res = await RM.api(`/api/weeks/${r.week_number}/level`, { method: "POST", body: { level: "max" } });
         RM.alert(res.message.replace(/<[^>]+>/g, ""));
         if (res.ok) { r.stamp_level = res.stamp_level; await refreshHome(); showResult(r); }
       } catch (e) { RM.toast(e.message); }
     });
+    if ($("edit-sent")) $("edit-sent").addEventListener("click", async () => {
+      try {
+        const j = await RM.api("/api/journal");
+        const report = j.reports.find((x) => x.id === r.report_id);
+        if (report) openEditor(report, async () => { await refreshHome(); renderToday(); });
+      } catch (e) { RM.toast(e.message); }
+    });
     $("not-report").addEventListener("click", async () => {
+      if (!(await RM.confirm("Пометить как не отчёт? Штамп за неделю пересчитается, а текст уйдёт Миле как сообщение."))) return;
       try {
         const res = await RM.api(`/api/reports/${r.report_id}/cancel`, { method: "POST", body: {} });
         RM.alert(res.message.replace(/<[^>]+>/g, ""));
@@ -294,8 +318,12 @@
     if (letters.length) out += `<details class="card"><summary>Сообщения вне недель (${letters.length})</summary><div class="content">${letters.map(reportHtml).join("")}</div></details>`;
     screen.innerHTML = out;
     screen.querySelectorAll("[data-cancel]").forEach((b) => b.addEventListener("click", async () => {
-      if (!confirm("Пометить как не отчёт? Штамп за неделю пересчитается, а текст уйдёт Миле как сообщение.")) return;
+      if (!(await RM.confirm("Пометить как не отчёт? Штамп за неделю пересчитается, а текст уйдёт Миле как сообщение."))) return;
       try { const res = await RM.api(`/api/reports/${b.dataset.cancel}/cancel`, { method: "POST", body: {} }); RM.toast(res.message.replace(/<[^>]+>/g, "")); await refreshHome(); renderJournal(); } catch (e) { RM.toast(e.message); }
+    }));
+    screen.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => {
+      const report = j.reports.find((x) => String(x.id) === b.dataset.edit);
+      if (report) openEditor(report, async () => { await refreshHome(); renderJournal(); });
     }));
     $("pdf").addEventListener("click", requestPdf);
   }
@@ -303,13 +331,66 @@
   function reportHtml(r) {
     const images = r.media.filter((m) => m.mime && m.mime.startsWith("image/") && m.downloaded);
     const others = r.media.filter((m) => !images.includes(m));
+    const edited = r.edited_at ? ` · <span class="edited">изменено ${RM.fmtDateTime(r.edited_at)}</span>` : "";
     return `<article class="report">
-      <div class="meta">${RM.fmtDateTime(r.created_at)} · ${r.level === "max" ? "⭐ максимум" : "✅ минимум"} · ${kindName(r.kind)}</div>
+      <div class="meta">${RM.fmtDateTime(r.created_at)} · ${r.level === "max" ? "⭐ максимум" : "✅ минимум"} · ${kindName(r.kind)}${edited}</div>
       ${r.text ? `<div class="text">${esc(r.text)}</div>` : ""}
       ${images.length ? `<div class="gallery">${images.map((m) => `<a href="${m.url}" target="_blank"><img src="${m.url}" alt="" loading="lazy"></a>`).join("")}</div>` : ""}
       ${others.map((m) => m.downloaded ? `<a class="btn ghost small" href="${m.url}" target="_blank" style="margin-top:8px">Открыть файл</a>` : `<span class="muted small">файл ещё скачивается</span>`).join(" ")}
-      <button class="btn link small" data-cancel="${r.id}">Это не отчёт</button>
+      <div class="row" style="margin-top:6px">
+        ${r.editable ? `<button class="btn link small" data-edit="${r.id}">✏️ Поправить</button>` : ""}
+        <button class="btn link small" data-cancel="${r.id}">Это не отчёт</button>
+      </div>
     </article>`;
+  }
+
+  // The editor: text, the files already on the report (tap to take one out), new files.
+  // Saves through PATCH; the API recomputes the stamp and tells Mila (DOMAIN §2).
+  function openEditor(r, done) {
+    const week = (state.home.weeks || []).find((w) => w.number === r.week_number);
+    const added = [], removed = new Set();
+    const body = `<p class="muted small">${week ? `Неделя ${week.number} · ${esc(week.title)} · ` : ""}пока неделя идёт, отчёт можно менять; Мила получит новую версию.</p>
+      <textarea id="edit-text" placeholder="Что сделал на этой неделе?">${esc(r.text || "")}</textarea>
+      ${r.media.length ? `<p class="note" style="margin:10px 0 4px">Файлы в отчёте — нажми, чтобы убрать</p><div class="previews" id="edit-existing">${r.media.map((m) => `<button class="pv keep" data-id="${m.id}" title="${esc(m.mime || "")}">${m.mime && m.mime.startsWith("image/") && m.downloaded ? `<img src="${m.url}" alt="">` : `<span>${kindName(m.mime && m.mime.startsWith("video/") ? "video" : "document")}</span>`}<span class="x" aria-hidden="true">✕</span></button>`).join("")}</div>` : ""}
+      <div class="attach" style="margin-top:10px"><label class="btn soft small" for="edit-files">📷 Добавить фото или видео</label><input id="edit-files" type="file" accept="image/*,video/*" multiple><span class="muted small" id="edit-count"></span></div>
+      <div class="previews" id="edit-previews" hidden></div>
+      <div class="bar" id="edit-bar" hidden><i></i></div>
+      <button class="btn block" id="edit-save" style="margin-top:12px">Сохранить</button>
+      <p class="note" style="margin:8px 0 0">Если убрать все фото, штамп станет минимумом; если добавить — максимумом.</p>`;
+    openSheet("Поправить отчёт", body, () => {
+      const existing = $("edit-existing");
+      if (existing) existing.querySelectorAll(".pv").forEach((b) => b.addEventListener("click", () => {
+        const id = b.dataset.id;
+        if (removed.has(id)) removed.delete(id); else removed.add(id);
+        b.classList.toggle("removed", removed.has(id));
+        b.classList.toggle("keep", !removed.has(id));
+      }));
+      const input = $("edit-files");
+      input.addEventListener("change", () => { addFiles(added, input.files, r.media.length - removed.size); input.value = ""; renderPreviews(added, $("edit-previews"), $("edit-count")); });
+      $("edit-save").addEventListener("click", async () => {
+        const text = $("edit-text").value.trim();
+        const kept = r.media.length - removed.size;
+        if (!text && !kept && !added.length) return RM.toast("Пустым отчёт оставить нельзя — напиши слово или оставь фото");
+        const button = $("edit-save"), bar = $("edit-bar");
+        button.disabled = true; button.textContent = "Сохраняю…";
+        const form = new FormData();
+        form.append("text", text);
+        removed.forEach((id) => form.append("remove", id));
+        added.forEach((f) => form.append("files", f, f.name));
+        if (added.length) bar.hidden = false;
+        try {
+          const res = await RM.upload(`/api/reports/${r.id}`, form, (p) => { bar.querySelector("i").style.width = Math.round(p * 100) + "%"; }, "PATCH");
+          RM.haptic("success");
+          closeSheet();
+          RM.toast(res.message.replace(/<[^>]+>/g, ""), 4000);
+          if (done) await done();
+        } catch (e) {
+          RM.haptic("error");
+          button.disabled = false; button.textContent = "Сохранить"; bar.hidden = true;
+          RM.toast(e.status === 409 ? e.message : "Не сохранилось: " + e.message, 4500);
+        }
+      });
+    });
   }
 
   function kindName(kind) {
@@ -377,9 +458,9 @@
     out += `<div class="card composer"><h2>✉️ Написать Миле</h2><p class="note helptext">${html(h.texts.write_prompt)}</p><textarea id="letter-text" placeholder="Это обычное сообщение, не отчёт"></textarea><button class="btn block" id="letter-send" style="margin-top:10px">Отправить</button></div>`;
     out += `<details class="card"><summary>❔ Если что-то пошло не так</summary><div class="content helptext">${html(h.texts.help)}</div></details>`;
     out += `<details class="card"><summary>О клубе</summary><div class="content helptext">${html(h.texts.greeting)}</div></details>`;
+    if (h.today.calendar_url) out += `<a class="card tight linkcard" href="${esc(h.today.calendar_url)}"><div class="row between"><div><b>☀️ Календарь цолькин</b><div class="muted small">Какой сегодня день у майя и что он советует. Можно посчитать свой день рождения.</div></div><span class="muted">›</span></div></a>`;
     const links = [];
     if (h.links.channel_url) links.push(`<a class="btn soft" href="${esc(h.links.channel_url)}">📣 Канал клуба</a>`);
-    if (h.today.calendar_url) links.push(`<a class="btn soft" href="${esc(h.today.calendar_url)}">☀️ Календарь цолькин</a>`);
     if (h.links.admin_app) links.push(`<a class="btn" href="/app/admin${location.hash}">🛠 Админка</a>`);
     if (links.length) out += `<div class="actions" style="margin-top:4px">${links.join("")}</div>`;
     out += `<p class="muted small" style="margin-top:20px;text-align:center">Бот${h.links.bot_username ? ` @${esc(h.links.bot_username)}` : ""} умеет то же самое: просто пришли ему текст или фото.</p>`;
