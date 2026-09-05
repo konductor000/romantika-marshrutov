@@ -7,6 +7,7 @@ the admin extras — and what each of them queues for the worker to send through
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -309,3 +310,22 @@ async def test_admin_reminders_remind_and_message(app: App) -> None:
     assert (
         await app.client.post("/api/admin/participants/424242/message", json={"text": "x"}, headers=admin)
     ).status_code == 404
+
+
+# --- healthz -----------------------------------------------------------------------
+
+
+async def test_healthz_reports_the_media_directory(app: App) -> None:
+    """A read-only media mount once turned every photo report into a 500; /healthz must say so first."""
+    r = await app.client.get("/healthz")
+    assert r.status_code == 200 and r.json() == {"status": "ok", "db": True, "media": True}
+    root = app.store.root
+    root.mkdir(parents=True, exist_ok=True)
+    root.chmod(0o500)
+    try:
+        if os.access(root, os.W_OK):
+            pytest.skip("running as root: the directory stays writable")
+        r = await app.client.get("/healthz")
+        assert r.status_code == 503 and r.json() == {"status": "degraded", "db": True, "media": False}
+    finally:
+        root.chmod(0o700)

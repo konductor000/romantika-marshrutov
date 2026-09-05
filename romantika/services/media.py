@@ -8,8 +8,10 @@ mid-download can never leave a half file that later looks complete.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import mimetypes
+import os
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -90,6 +92,14 @@ class MediaStore:
 
     def full_path(self, relative: str) -> Path:
         return self.root / relative
+
+    def writable(self) -> bool:
+        """Can uploads be stored here? `/healthz` asks: a read-only mount once answered 500 to real people."""
+        try:
+            self.root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+        return os.access(self.root, os.W_OK)
 
     async def download(
         self,
@@ -178,7 +188,8 @@ class MediaStore:
                         raise UploadTooLargeError(f"{row.path}: more than {max_bytes} bytes")
                     handle.write(chunk)
         except BaseException:
-            part.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):  # the cleanup must not hide why the write failed
+                part.unlink(missing_ok=True)
             raise
         return await self.save_upload(session, media_id, part, now=now)
 

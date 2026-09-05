@@ -11,7 +11,7 @@ from sqlalchemy import text
 
 from romantika.domain.tzolkin import SIGNS, TONES, tzolkin_day
 from romantika.services import achievements, content
-from romantika.web.deps import SessionDep, SettingsDep, TodayDep
+from romantika.web.deps import MediaStoreDep, SessionDep, SettingsDep, TodayDep
 
 router = APIRouter(tags=["public"])
 templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
@@ -54,9 +54,14 @@ def _signs_payload() -> dict[str, object]:
 
 
 @router.get("/healthz")
-async def healthz(session: SessionDep) -> JSONResponse:
-    ok = (await session.execute(text("SELECT 1"))).scalar_one() == 1
-    return JSONResponse({"status": "ok" if ok else "degraded", "db": ok})
+async def healthz(session: SessionDep, media_store: MediaStoreDep) -> JSONResponse:
+    """200 only when both the DB answers and the media directory takes uploads; 503 «degraded» otherwise."""
+    db = (await session.execute(text("SELECT 1"))).scalar_one() == 1
+    media = media_store.writable()
+    ok = db and media
+    return JSONResponse(
+        {"status": "ok" if ok else "degraded", "db": db, "media": media}, status_code=200 if ok else 503
+    )
 
 
 @router.get("/", response_class=HTMLResponse)

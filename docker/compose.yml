@@ -65,7 +65,7 @@ services:
     ports:
       - "127.0.0.1:8010:8010"
     volumes:
-      - media:/media:ro
+      - media:/media  # the Mini App uploads land here through web; read-only broke every photo report
     depends_on:
       migrate:
         condition: service_completed_successfully

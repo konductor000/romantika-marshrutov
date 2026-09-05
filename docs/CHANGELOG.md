@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.1.1 — 2026-09-05 (hotfix: photo reports from the app)
+
+On the VPS the media volume was mounted read-only into `web`, so every report with a file from
+the Mini App answered «Internal Server Error» (text-only reports and the bot were fine). The
+mount is read-write now; `/healthz` reports `media` and answers 503 when the directory is not
+writable, so the compose healthcheck and the deploy smoke catch it before people do; the
+upload cleanup no longer hides the original error in the log.
+
 ## v2.1.0 — 2026-09-05 (Mini App round two, new bot)
 
 For participants: reports can be edited in the app while the week is open (text and files;

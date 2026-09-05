@@ -27,7 +27,8 @@ DRY=1 scripts/deploy.sh           # see what rsync would send
 What it does: rsync the repository (no `.git`, `.venv`, `data`, `.env`, `legacy`) →
 `docker compose build migrate` on the VPS through the host proxy (apt/PyPI are blocked from
 the RU datacenter otherwise) → `docker compose up -d` (migrations run first, the rest waits for
-them) → `curl /healthz` → tail of bot/worker logs. The image is built once and shared by all
+them) → `curl /healthz` (must say `"status":"ok"`: `media:false` means the media volume is not
+writable for web) → tail of bot/worker logs. The image is built once and shared by all
 services. First deploy: put `.env` in place before running it.
 
 Compose on the VPS: `cd /opt/stacks/romantika && docker compose -f docker/compose.yml -f docker/compose.vps.yml --project-directory . <cmd>`.

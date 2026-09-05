@@ -265,7 +265,9 @@ destination: Path)`, later stages add `send_message(chat_id, text)` and
 
 ## 8. Web (FastAPI)
 
-- `GET /healthz` → `{"status":"ok","db":true}`.
+- `GET /healthz` → `{"status":"ok","db":true,"media":true}`; 503 `degraded` when the DB does not
+  answer or `MEDIA_DIR` is not writable (uploads from the Mini App land there through web). The
+  compose healthcheck and the deploy smoke both rely on the status code.
 - Public: `GET /` season page (SSR from DB; future weeks not in HTML), `GET /calendar`
   (tzolkin Mini App; signs embedded from data/tzolkin.json).
 - Mini Apps: `GET /app` and `GET /app/{tab}` (participant: today · passport · journal · words ·

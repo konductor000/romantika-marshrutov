@@ -41,7 +41,8 @@ $COMPOSE up -d --remove-orphans
 sleep 25
 $COMPOSE ps
 echo "== smoke"
-curl -fsS http://127.0.0.1:8010/healthz && echo
+health=\$(curl -sS http://127.0.0.1:8010/healthz || true); echo "\$health"
+echo "\$health" | grep -q '"status":"ok"' || { echo "healthz is not ok (db or media) — see: $COMPOSE logs web"; exit 1; }
 $COMPOSE logs --tail 20 bot worker | tail -40
 EOF
 echo "deployed to $HOST:$DEST"
