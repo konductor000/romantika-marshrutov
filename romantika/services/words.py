@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.db import models
 from romantika.services import content, freezes, people
+from romantika.services.errors import Refused
 
 #: The first dash surrounded by spaces, or the first colon, separates word and meaning.
 SEPARATOR = re.compile(r"\s+[—–-]\s+|\s*:\s*")
@@ -81,10 +82,10 @@ async def add(
     """Store one word of a participant; the first one of the season earns a freeze."""
     word, meaning = parse(raw)
     if not word:
-        raise ValueError("a dictionary entry needs a word")
+        raise Refused("нужно само слово, а не только его значение")
     await people.ensure_member(session, season_id, user_id, now=now)
     if await _has_word(session, season_id=season_id, user_id=user_id, word=word[:WORD_LENGTH]):
-        raise ValueError(f"слово «{word[:WORD_LENGTH]}» у тебя в словарике уже есть")
+        raise Refused(f"слово «{word[:WORD_LENGTH]}» у тебя в словарике уже есть")
 
     first = await _count(session, season_id=season_id, user_id=user_id) == 0
     row = models.Word(

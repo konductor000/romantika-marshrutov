@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
 from romantika.domain.types import Level, StampLevel
 from romantika.services.journal import JournalView, JournalWeek
@@ -90,10 +91,14 @@ def _photos_of(week: JournalWeek, media_root: Path | None, budget: int) -> tuple
     return photos, skipped
 
 
-def css_string(value: str) -> str:
-    """Quote a value for a CSS `content: "..."` — HTML escaping does not apply inside `<style>`."""
+def css_string(value: str) -> Markup:
+    """Quote a value for a CSS `content: "..."` in the page footer.
+
+    The template autoescapes HTML, which would turn the quotes into `&#34;` and make WeasyPrint
+    drop the whole footer rule — so the result is marked safe here, after CSS escaping.
+    """
     escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
-    return f'"{escaped}"'
+    return Markup(f'"{escaped}"')
 
 
 def clip(text: str, limit: int = MAX_TEXT_CHARS) -> str:

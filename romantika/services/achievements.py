@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.db import models
+from romantika.services.errors import Refused
 
 #: `achievements.code` is a `varchar(64)`; a longer free text is stored trimmed.
 CODE_LENGTH = 64
@@ -56,7 +57,7 @@ async def award(
     """Grant an achievement by catalogue code or by free text; repeats do nothing."""
     text = code_or_text.strip()
     if not text:
-        raise ValueError("an achievement needs a code or a text")
+        raise Refused("нужен код ачивки или её текст")
 
     known = (
         await session.execute(

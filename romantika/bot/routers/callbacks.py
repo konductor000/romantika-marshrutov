@@ -156,7 +156,8 @@ async def _dispatch(
             await safe_send(bot, chat_id, ru.NOT_REPORT_ALREADY if already else ru.NOT_REPORT_FOREIGN)
             return
         row = await session.get(models.Report, report_id)
-        letter = await letters.create(
+        # A message sent outside a week is a letter already; taking it back adds nothing new.
+        letter = await letters.for_report(session, report_id) or await letters.create(
             session,
             season_id=season.id,
             user_id=user.id,

@@ -13,6 +13,8 @@ def _non_blank(value: str) -> str:
     stripped = value.strip()
     if not stripped:
         raise ValueError("пустой текст")
+    if "\x00" in stripped:
+        raise ValueError("в тексте недопустимые символы")
     return stripped
 
 

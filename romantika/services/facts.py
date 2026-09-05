@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.db import models
 from romantika.services import content
+from romantika.services.errors import Refused
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +38,7 @@ async def add(
     """Add one fact; returns its id (the admin removes it by that id)."""
     body = text.strip()
     if not body:
-        raise ValueError("a fact needs a text")
+        raise Refused("факт без текста не запишу")
     row = models.Fact(season_id=season_id, week_id=week_id, text=body, author_id=author_id, created_at=now)
     session.add(row)
     await session.flush()

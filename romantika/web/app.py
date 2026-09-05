@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from romantika.config import Settings
 from romantika.domain.calendar import moscow_now
+from romantika.services.errors import Refused
 from romantika.services.media import MediaStore
 from romantika.web.deps import AppState
 from romantika.web.routes import admin_api, api, media, public
@@ -20,8 +21,8 @@ from romantika.web.routes import admin_api, api, media, public
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
-async def _value_error(_: Request, exc: Exception) -> JSONResponse:
-    """A service refused the input (`ValueError`): the client's fault, said in Russian."""
+async def _refused(_: Request, exc: Exception) -> JSONResponse:
+    """A service refused the input (`services.errors.Refused`): the client's fault, said in Russian."""
     return JSONResponse({"detail": str(exc)}, status_code=422)
 
 
@@ -39,7 +40,7 @@ def create_app(
         media_store=media_store,
         clock=clock or moscow_now,
     )
-    app.add_exception_handler(ValueError, _value_error)
+    app.add_exception_handler(Refused, _refused)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(public.router)
     app.include_router(api.router)

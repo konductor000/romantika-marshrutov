@@ -236,7 +236,9 @@ async def _quotes(session: AsyncSession, *, season_id: int, week_id: int) -> dic
     )
     quotes: dict[int, str] = {}
     for user_id, text in (await session.execute(query)).all():
-        quotes.setdefault(user_id, text)
+        first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        if first:
+            quotes.setdefault(user_id, first)
     return quotes
 
 

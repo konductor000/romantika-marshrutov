@@ -86,7 +86,7 @@ async def test_an_empty_file_is_no_file(app: App) -> None:
         files=[("files", ("empty.txt", b"", "text/plain"))],
         headers=app.headers(ALICE),
     )
-    assert r.status_code == 201 and r.json()["level"] == "min"
+    assert r.status_code == 422, "next to a text it is refused too, not dropped in silence"
 
 
 async def test_a_report_text_has_a_limit(app: App) -> None:
@@ -114,7 +114,7 @@ async def test_a_retried_edit_with_the_same_key_adds_the_file_once(app: App) -> 
         headers=app.headers(ALICE),
     )
     assert first.status_code == 200 and second.status_code == 200
-    assert len(second.json()["report"]["media"]) == 1 and second.json()["message"] == ""
+    assert len(second.json()["report"]["media"]) == 1 and "обновила" in second.json()["message"]
     media = list((await app.session.execute(select(models.Media))).scalars())
     assert len(media) == 1
     copies = [j for j in await app.jobs("telegram_notify") if "Правка отчёта" in (j.payload["text"] or "")]
@@ -387,3 +387,106 @@ async def test_a_future_week_has_no_draft_yet(app: App) -> None:
     s = (await app.client.get("/api/admin/summary?week=5", headers=app.headers(ADMIN_ID, "Мила"))).json()
     assert s["draft_post"] == ""
     assert any("ещё не началась" in note for note in s["draft_notes"])
+
+
+# --- round three: what the API critic found ------------------------------------------------------
+
+
+async def test_a_stamp_mila_removed_stays_removed_even_after_a_later_report_is_cancelled(app: App) -> None:
+    """Once a later report has earned the week again, cancelling it must not fall back on the
+    reports Mila had in front of her when she took the stamp away (the critic's B-1)."""
+    admin = app.headers(ADMIN_ID, "Мила")
+    photo = (
+        await app.client.post(
+            "/api/reports", files=[("files", ("p.jpg", JPEG, "image/jpeg"))], headers=app.headers(ALICE)
+        )
+    ).json()
+    assert photo["stamp_level"] == "max"
+    r = await app.client.put(f"/api/admin/participants/{ALICE}/stamps/1", json={"level": None}, headers=admin)
+    assert r.status_code == 200
+    later = (await app.client.post("/api/reports", data={"text": "новый"}, headers=app.headers(ALICE))).json()
+    assert later["stamp_level"] == "min", "a report sent after her decision earns the week again"
+    r = await app.client.post(f"/api/reports/{later['report_id']}/cancel", headers=app.headers(ALICE))
+    assert r.status_code == 200 and r.json()["stamp_level"] is None
+    week = await app.session.execute(
+        select(models.Week).where(models.Week.season_id == app.season_id, models.Week.number == 1)
+    )
+    assert await stamps.get_level(app.session, user_id=ALICE, week_id=week.scalar_one().id) is None
+    r = await app.client.post(f"/api/reports/{photo['report_id']}/cancel", headers=app.headers(ALICE))
+    assert r.status_code == 200 and r.json()["stamp_level"] is None
+
+
+async def test_the_pdf_footer_keeps_its_quotes(app: App) -> None:
+    from romantika.pdf.journal import render_journal_html
+    from romantika.services import journal
+
+    await app.client.post("/api/reports", data={"text": "строка"}, headers=app.headers(ALICE))
+    view = await journal.build(app.session, season_id=app.season_id, user_id=ALICE, today=app.now.date())
+    html = render_journal_html(view)
+    style = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert f'content: "Романтика маршрутов · " "{view.season.title}"' in style
+    assert "&#34;" not in style and "&quot;" not in style, "HTML escaping inside <style> kills the footer"
+
+
+async def test_a_nul_byte_is_refused_not_a_500(app: App) -> None:
+    r = await app.client.post("/api/letters", json={"text": "привет\x00мир"}, headers=app.headers(ALICE))
+    assert r.status_code == 422
+    r = await app.client.post("/api/reports", data={"text": "тест\x00нуль"}, headers=app.headers(ALICE))
+    assert r.status_code == 422 and "символы" in r.json()["detail"]
+
+
+async def test_an_overlong_attempt_key_is_refused_not_cut(app: App) -> None:
+    long_key = "c" * 64
+    r = await app.client.post(
+        "/api/reports", data={"text": "первый", "client_id": long_key + "AAA"}, headers=app.headers(ALICE)
+    )
+    assert r.status_code == 422
+    r = await app.client.post(
+        "/api/reports", data={"text": "первый", "client_id": long_key}, headers=app.headers(ALICE)
+    )
+    assert r.status_code == 201
+
+
+async def test_editing_an_unknown_report_is_a_404(app: App) -> None:
+    r = await app.client.patch("/api/reports/999999", data={"text": "x"}, headers=app.headers(ALICE))
+    assert r.status_code == 404
+
+
+async def test_the_draft_quotes_one_line_per_person(app: App) -> None:
+    await app.client.post("/api/reports", data={"text": "Строка 1\nСтрока 2\n\nконец"}, headers=app.headers(ALICE))
+    s = (await app.client.get("/api/admin/summary?week=1", headers=app.headers(ADMIN_ID, "Мила"))).json()
+    assert "Строка 1" in s["draft_post"] and "Строка 2" not in s["draft_post"]
+
+
+async def test_a_fact_for_an_unknown_week_is_a_404(app: App) -> None:
+    admin = app.headers(ADMIN_ID, "Мила")
+    r = await app.client.post("/api/admin/facts", json={"text": "факт", "week_number": 999}, headers=admin)
+    assert r.status_code == 404
+
+
+async def test_a_file_under_another_field_name_is_not_an_attachment(app: App) -> None:
+    r = await app.client.post(
+        "/api/reports",
+        data={"text": "только текст"},
+        files=[("junk", ("p.jpg", JPEG, "image/jpeg"))],
+        headers=app.headers(ALICE),
+    )
+    assert r.status_code == 201 and r.json()["level"] == "min"
+
+
+async def test_a_retried_edit_answers_with_a_receipt(app: App) -> None:
+    created = (await app.client.post("/api/reports", data={"text": "первый"}, headers=app.headers(ALICE))).json()
+    for _ in range(2):
+        r = await app.client.patch(
+            f"/api/reports/{created['report_id']}",
+            data={"text": "поправлено", "edit_key": "k-1"},
+            headers=app.headers(ALICE),
+        )
+        assert r.status_code == 200 and r.json()["message"]
+
+
+async def test_mila_can_give_herself_a_freeze(app: App) -> None:
+    admin = app.headers(ADMIN_ID, "Мила")
+    r = await app.client.post(f"/api/admin/participants/{ADMIN_ID}/freezes", json={"reason": "manual"}, headers=admin)
+    assert r.status_code == 201 and r.json()["granted"] is True
+    assert await app.jobs("telegram_notify") == [], "she does not get a message from herself"

@@ -47,7 +47,7 @@ case "${1:-up}" in
     echo "admin user id: $ADMIN_IDS"
     ;;
   down) for n in worker bot web telegram; do stop $n; done; docker rm -f "$PG_NAME" >/dev/null 2>&1 && echo "db: removed" || true ;;
-  restart) for n in worker bot web; do stop $n; done; "$0" up ;;
+  restart) for n in worker bot web telegram; do stop $n; done; "$0" up ;;
   logs) tail -n 50 -F "$DEV"/logs/*.log ;;
   link) uv run python -m romantika.ops.dev_link --user "$2" --name "${3:-Гость}" --path "${4:-/app}" ;;
   *) echo "usage: $0 up|down|restart|logs|link <id> <name> [/path]"; exit 2 ;;

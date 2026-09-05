@@ -211,10 +211,10 @@ async def grant_freeze(
         now=now,
         note=body.note,
     )
-    if granted and user_id != admin.user.id:
+    if not granted:
+        response.status_code = status.HTTP_200_OK  # the cap: nothing new was created
+    elif user_id != admin.user.id:
         await notify.enqueue_message(session, chat_id=user_id, text=ru.freeze_given(body.reason), now=now)
-    else:
-        response.status_code = status.HTTP_200_OK  # nothing new was created (the cap, or Mila herself)
     return schemas.FreezeOut(granted=granted, freezes_total=await freezes.total(session, season.id, user_id))
 
 
@@ -314,7 +314,9 @@ async def add_fact(
     week_id: int | None = None
     if body.week_number is not None:
         week = await content.week_by_number(session, season.id, body.week_number)
-        week_id = week.id if week else None
+        if week is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, f"недели {body.week_number} в этом сезоне нет")
+        week_id = week.id
     else:
         current = await content.current_week(session, season.id, today=today)
         week_id = current.id if current else None

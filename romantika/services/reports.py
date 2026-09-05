@@ -274,14 +274,11 @@ async def _recompute_stamp(
         return Recomputed(level=StampLevel(stamp.level), upgraded_to_max=False)
 
     levels = await _remaining_levels(session, user_id=user_id, week_id=week_id)
-    if stamp is None:
-        # Mila took the stamp away after seeing these reports: editing them does not bring it
-        # back. Only a report sent after her decision can earn the week again.
-        levels = {
-            rid: level
-            for rid, level in levels.items()
-            if rid not in await stamps.cleared_reports(session, user_id=user_id, week_id=week_id)
-        }
+    # Mila took the stamp away after seeing these reports: neither editing nor cancelling
+    # anything brings them back into the count, even once a later report has earned the week
+    # again. Only reports sent after her decision speak for the week.
+    cleared = await stamps.cleared_reports(session, user_id=user_id, week_id=week_id)
+    levels = {rid: level for rid, level in levels.items() if rid not in cleared}
     if not levels:
         if stamp is not None:
             await session.delete(stamp)

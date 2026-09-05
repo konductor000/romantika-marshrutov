@@ -22,6 +22,11 @@ before removing (a week that has not started refuses stamps, intents and reminde
 filters «Без штампа на неделе» / «Взялись и молчат»; the audit log names who did what, in
 Russian; letters show their files; the Sunday draft has no service lines in the text to copy
 and none for a week that has not started; a failed screen says so instead of spinning.
+After the second round of critics: a stamp Mila removed stays removed on every path (also
+when a later report earned the week and was then cancelled); the PDF footer is back (the
+template had HTML-escaped its CSS string); a retried edit in flight is applied once; a NUL
+byte or an over-long attempt id is a 422, not a 500 or a collapsed report; the Sunday draft
+quotes one line per person; the bot's «это не отчёт» makes one letter like the app's.
 
 Under the hood: `reports.client_id`, `reports.edited_at`, `letters`, `admin_links.letter_id`
 (migration b7d4e2a90c15); jobs `season_journals`; a local stand with a fake Bot API

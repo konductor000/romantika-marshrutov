@@ -134,12 +134,25 @@ def _attach(fields: dict[str, Any], key: str, kind: str, files: dict[str, tuple[
     elif isinstance(raw, str) and raw.startswith("attach://") and raw[9:] in files:
         data, name = files[raw[9:]]
     elif isinstance(raw, str) and raw in store.files:
-        fields[kind] = [{**_meta(raw), "width": 800, "height": 600}] if kind == "photo" else _meta(raw)
+        fields[kind] = (
+            [{**_meta(raw), "width": 800, "height": 600}] if kind == "photo" else {**_meta(raw), **_extra(kind)}
+        )
         return
     else:
         data, name = b"", "file.bin"
     meta = _remember_file(data, name, kind)
-    fields[kind] = [{**meta, "width": 800, "height": 600}] if kind == "photo" else {**meta, "file_name": name}
+    fields[kind] = (
+        [{**meta, "width": 800, "height": 600}] if kind == "photo" else {**meta, **_extra(kind), "file_name": name}
+    )
+
+
+def _extra(kind: str) -> dict[str, Any]:
+    """The fields Telegram always sends for a media kind (aiogram refuses the answer without them)."""
+    if kind in ("video", "animation", "video_note"):
+        return {"width": 640, "height": 480, "duration": 3, "length": 240}
+    if kind in ("audio", "voice"):
+        return {"duration": 3}
+    return {}
 
 
 def _meta(file_id: str) -> dict[str, Any]:

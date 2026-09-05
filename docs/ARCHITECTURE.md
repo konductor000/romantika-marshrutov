@@ -289,10 +289,15 @@ destination: Path)`, later stages add `send_message(chat_id, text)` and
   already has), `POST /api/facts`.
 - Multipart limits (`routes/api.py`): the request is refused with 413 from `Content-Length`
   before parsing when it exceeds 200 MB; `request.form(max_files=11, max_fields=64)`; one file
-  ≤ 50 MB, 10 files per report, text ≤ 4000 characters (422); zero-size parts are skipped;
-  files stored before a failure are removed again. Submissions of one person are serialised
-  with `pg_advisory_xact_lock(hashtext(user_id:client_id))`. A service `ValueError` answers
-  422 `{"detail": …}` (handler in `web/app.py`).
+  ≤ 50 MB, 10 files per report, text ≤ 4000 characters (422); only parts named `files` are
+  attachments; a zero-size file is refused (422) rather than dropped; a NUL byte in any text
+  is 422; `client_id` / `edit_key` longer than 64 characters are 422, never cut; files stored
+  before a failure are removed again. One person's attempts are serialised with
+  `pg_advisory_xact_lock` on `user:client_id` (POST) and `user:edit:report:edit_key` (PATCH),
+  so a retry in flight finds the first attempt's row instead of doing the work twice. A
+  service that refuses the input raises `services.errors.Refused` (a `ValueError` with a
+  Russian message) and the app answers 422 `{"detail": …}` (`web/app.py`); any other error
+  stays a 500.
 - `GET /media/{id}` sends only images, video and audio inline (`INLINE_TYPES`); anything else
   goes out as `application/octet-stream` with `Content-Disposition: attachment`, always with
   `X-Content-Type-Options: nosniff`. Hidden media are 404 for the owner but still open for Mila.

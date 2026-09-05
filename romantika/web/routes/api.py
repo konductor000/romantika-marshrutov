@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy import text as sql_text
 from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException
 
 from romantika.db import models
 from romantika.domain.types import ReportKind, StampLevel
@@ -47,6 +48,10 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_REQUEST_BYTES = 200 * 1024 * 1024
 #: A report's text; the bot's own limit is Telegram's message length, the same order of size.
 MAX_TEXT_CHARS = 4000
+#: `client_id` / `edit_key` are opaque ids the app makes up (UUIDs); longer means a bug, not a cut.
+MAX_KEY_CHARS = 64
+#: The form parser's own ceiling on file parts — above ours so that our 413 speaks first.
+MAX_FORM_FILES = 40
 _CHUNK = 1024 * 1024
 
 
@@ -62,18 +67,46 @@ async def _multipart(request: Request) -> tuple[dict[str, str], dict[str, list[s
     length = request.headers.get("content-length")
     if length and length.isdigit() and int(length) > MAX_REQUEST_BYTES:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"вместе больше {MAX_REQUEST_BYTES // (1024 * 1024)} МБ")
-    form = await request.form(max_files=MAX_UPLOAD_FILES + 1, max_fields=64)
+    try:
+        # The parser's own ceilings sit above ours, so the answers a client can hit are ours
+        # (413 «не больше 10 файлов»), and the parser only refuses what is not a form at all.
+        form = await request.form(max_files=MAX_FORM_FILES, max_fields=64)
+    except MultiPartException as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "не смогла прочитать отправленное") from exc
     fields: dict[str, str] = {}
     lists: dict[str, list[str]] = {}
     files: list[UploadFile] = []
     for key, value in form.multi_items():
         if isinstance(value, UploadFile):
-            if value.size:  # an empty file is no file: it must not earn a maximum
-                files.append(value)
+            if key != "files":
+                continue  # a file under another name is not an attachment
+            if not value.size:
+                # An empty file is no file: it must neither earn a maximum nor vanish silently.
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_CONTENT, f"файл «{value.filename or ''}» пустой — не прикрепила"
+                )
+            files.append(value)
         else:
+            if "\x00" in value:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "в тексте недопустимые символы")
             fields.setdefault(key, value)
             lists.setdefault(key, []).append(value)
     return fields, lists, files
+
+
+def _attempt_key(fields: dict[str, str], name: str) -> str | None:
+    """`client_id` / `edit_key`: one per attempt, at most 64 characters — never cut, or two
+    different attempts would collapse into one report."""
+    value = fields.get(name, "").strip()
+    if len(value) > MAX_KEY_CHARS:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"{name} длиннее {MAX_KEY_CHARS} знаков")
+    return value or None
+
+
+async def _serialise(session: SessionDep, key: str) -> None:
+    """Two retries of one attempt wait for each other on a transaction lock, so the second one
+    finds the first one's row instead of doing the work twice."""
+    await session.execute(sql_text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": key})
 
 
 @router.get("/me", response_model=schemas.Me)
@@ -205,7 +238,7 @@ async def submit_report(
     """
     fields, _, uploads = await _multipart(request)
     body = fields.get("text", "").strip()
-    client_id = fields.get("client_id", "")[:64]
+    client_id = _attempt_key(fields, "client_id")
     if not body and not uploads:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "пустой отчёт: нужен текст или файл")
     if len(body) > MAX_TEXT_CHARS:
@@ -213,9 +246,7 @@ async def submit_report(
     if len(uploads) > MAX_UPLOAD_FILES:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"не больше {MAX_UPLOAD_FILES} файлов за раз")
     if client_id:
-        await session.execute(
-            sql_text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": f"{principal.user.id}:{client_id}"}
-        )
+        await _serialise(session, f"{principal.user.id}:{client_id}")
         existing = await reports.find_by_client_id(session, user_id=principal.user.id, client_id=client_id)
         if existing is not None:
             response.status_code = status.HTTP_200_OK
@@ -365,22 +396,32 @@ async def edit_report(
     text = fields.get("text", "")
     if len(text.strip()) > MAX_TEXT_CHARS:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"текст длиннее {MAX_TEXT_CHARS} знаков")
-    edit_key = fields.get("edit_key", "")[:64] or None
-    remove = [raw for raw in lists.get("remove", []) if raw][: MAX_UPLOAD_FILES * 2]
+    edit_key = _attempt_key(fields, "edit_key")
+    remove = [raw for raw in lists.get("remove", []) if raw]
+    if len(remove) > MAX_UPLOAD_FILES * 2:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "слишком много файлов на удаление")
     try:
         remove_ids = [uuid.UUID(raw) for raw in remove]
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "неверный id файла") from exc
     row = await session.get(models.Report, report_id)
-    if row is None or row.user_id != principal.user.id:
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "такого отчёта нет")
+    if row.user_id != principal.user.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, ru.NOT_REPORT_FOREIGN)
-    if edit_key and await reports.edit_applied(session, report_id=report_id, edit_key=edit_key):
-        fresh = await views.report_out(session, report_id, today=today)
-        assert fresh is not None
-        level = await stamps.level_for_week(session, user_id=principal.user.id, week_id=row.week_id)
-        return schemas.ReportEditOut(
-            report=fresh, stamp_level=level.value if level else None, freeze_granted=False, message=""
-        )
+    if edit_key:
+        await _serialise(session, f"{principal.user.id}:edit:{report_id}:{edit_key}")
+        if await reports.edit_applied(session, report_id=report_id, edit_key=edit_key):
+            fresh = await views.report_out(session, report_id, today=today)
+            assert fresh is not None
+            level = await stamps.level_for_week(session, user_id=principal.user.id, week_id=row.week_id)
+            week_dto = next((w for w in await content.weeks(session, season.id) if w.id == row.week_id), None)
+            return schemas.ReportEditOut(
+                report=fresh,
+                stamp_level=level.value if level else None,
+                freeze_granted=False,
+                message=ru.edit_reply(week_dto, level, freeze_granted=False) if week_dto else "",
+            )
     live = len([m for m in await _report_media(session, report_id) if m.hidden_at is None and m.id not in remove_ids])
     if live + len(uploads) > MAX_UPLOAD_FILES:
         raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"не больше {MAX_UPLOAD_FILES} файлов в отчёте")
