@@ -91,9 +91,18 @@ async def calendar_page(request: Request, session: SessionDep, settings: Setting
     return templates.TemplateResponse(request, "calendar.html", context)
 
 
-@router.get("/app/journal", response_class=HTMLResponse)
-async def journal_app(request: Request, settings: SettingsDep) -> HTMLResponse:
-    return templates.TemplateResponse(request, "journal_app.html", {"settings": settings})
+APP_TABS = ("today", "passport", "journal", "words", "more")
+
+
+@router.get("/app", response_class=HTMLResponse)
+@router.get("/app/{tab}", response_class=HTMLResponse)
+async def participant_app(request: Request, settings: SettingsDep, tab: str = "today") -> HTMLResponse:
+    """The participant Mini App: one shell, the tab to open comes from the path (`/app/journal`)."""
+    if tab == "admin":
+        return await admin_app(request, settings)
+    return templates.TemplateResponse(
+        request, "app.html", {"settings": settings, "tab": tab if tab in APP_TABS else "today"}
+    )
 
 
 @router.get("/app/admin", response_class=HTMLResponse)

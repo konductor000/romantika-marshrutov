@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import mimetypes
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -63,6 +64,19 @@ def suffix_for(*, kind: ReportKind, mime: str | None) -> str:
     return _SUFFIX_BY_KIND.get(kind, ".bin")
 
 
+def kind_for_mime(mime: str | None) -> ReportKind:
+    """What a Mini App upload counts as (DOMAIN §2): images and videos are a maximum,
+    audio a minimum, anything else a document (maximum), exactly like the bot's message kinds."""
+    head = (mime or "").split("/", 1)[0].lower()
+    if head == "image":
+        return ReportKind.PHOTO
+    if head == "video":
+        return ReportKind.VIDEO
+    if head == "audio":
+        return ReportKind.AUDIO
+    return ReportKind.DOCUMENT
+
+
 def new_relative_path(*, season_slug: str, user_id: int, suffix: str) -> str:
     """`<season_slug>/<user_id>/<uuid>.<ext>` — unique, and readable in a backup listing."""
     return f"{season_slug}/{user_id}/{uuid.uuid4()}{suffix}"
@@ -95,6 +109,10 @@ class MediaStore:
             raise LookupError(f"media {media_id} does not exist")
         if row.downloaded_at is not None and self.full_path(row.path).exists():
             return MediaDTO(media_id=row.id, path=row.path, sha256=row.sha256, size=row.size)
+        if row.tg_file_id is None:
+            # Uploaded through the Mini App: the bytes came with the request, there is nothing
+            # to fetch. Reaching here means the upload failed mid-way and the row is a stub.
+            raise LookupError(f"media {media_id} was uploaded directly and has no Telegram file")
 
         remote = await telegram.get_file(row.tg_file_id)
         relative = _with_suffix(row.path, PurePosixPath(remote.file_path).suffix)
@@ -111,6 +129,65 @@ class MediaStore:
         await session.flush()
         return MediaDTO(media_id=row.id, path=relative, sha256=digest, size=size)
 
+    async def save_upload(self, session: AsyncSession, media_id: uuid.UUID, part: Path, *, now: datetime) -> MediaDTO:
+        """Move a file uploaded through the Mini App into place (ARCHITECTURE §8.1).
+
+        `part` is a temporary file the web layer streamed the request body into; it must lie
+        on the media filesystem (see `upload_part_path`) so the final rename is atomic. The
+        row is marked downloaded only after the hash is taken, the same as for Telegram files.
+        """
+        row = await session.get(models.Media, media_id)
+        if row is None:
+            raise LookupError(f"media {media_id} does not exist")
+        if row.downloaded_at is not None and self.full_path(row.path).exists():
+            part.unlink(missing_ok=True)
+            return MediaDTO(media_id=row.id, path=row.path, sha256=row.sha256, size=row.size)
+        target = self.full_path(row.path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        digest, size = await asyncio.to_thread(_finalize, part, target, None)
+        row.sha256 = digest
+        row.size = size
+        row.downloaded_at = now
+        await session.flush()
+        return MediaDTO(media_id=row.id, path=row.path, sha256=digest, size=size)
+
+    async def receive_upload(
+        self,
+        session: AsyncSession,
+        media_id: uuid.UUID,
+        chunks: AsyncIterator[bytes],
+        *,
+        now: datetime,
+        max_bytes: int,
+    ) -> MediaDTO:
+        """Stream a Mini App upload to disk and finalize it; nothing partial ever survives.
+
+        Raises `UploadTooLargeError` past `max_bytes` (the part file is removed); the caller's
+        transaction then rolls the report back too.
+        """
+        row = await session.get(models.Media, media_id)
+        if row is None:
+            raise LookupError(f"media {media_id} does not exist")
+        part = self.upload_part_path(row.path)
+        size = 0
+        try:
+            with part.open("wb") as handle:
+                async for chunk in chunks:
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise UploadTooLargeError(f"{row.path}: more than {max_bytes} bytes")
+                    handle.write(chunk)
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
+        return await self.save_upload(session, media_id, part, now=now)
+
+    def upload_part_path(self, relative: str) -> Path:
+        """Where the web layer streams an upload before `save_upload` renames it into place."""
+        target = self.full_path(relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return target.with_name(target.name + ".part")
+
 
 def _with_suffix(relative: str, suffix: str) -> str:
     """Keep the generated uuid, take the extension Telegram actually served."""
@@ -118,6 +195,10 @@ def _with_suffix(relative: str, suffix: str) -> str:
     if not suffix or path.suffix == suffix:
         return relative
     return str(path.with_suffix(suffix))
+
+
+class UploadTooLargeError(ValueError):
+    """A Mini App upload exceeded the size the web layer allows."""
 
 
 class TruncatedDownloadError(OSError):

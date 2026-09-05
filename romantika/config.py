@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     def is_admin(self, user_id: int) -> bool:
         return user_id in self.admin_ids
 
+    @property
+    def admin_chat(self) -> int | None:
+        """Where participants' reports and notes are copied: ADMIN_CHAT_ID, else the first admin."""
+        return self.admin_chat_id or (self.admin_ids[0] if self.admin_ids else None)
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

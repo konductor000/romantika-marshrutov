@@ -1,7 +1,7 @@
 """`python -m romantika.ops.telegram_setup` — configure the bot through the Bot API.
 
 Sets the display name, descriptions, the command list and the menu button that opens the
-journal Mini App. Idempotent; run after creating a bot in BotFather or after changing
+participant Mini App. Idempotent; run after creating a bot in BotFather or after changing
 `PUBLIC_BASE_URL`. Everything BotFather asks for interactively lives here instead.
 """
 
@@ -42,12 +42,10 @@ async def run() -> None:
         await bot.set_my_description(DESCRIPTION)
         await bot.set_my_commands([BotCommand(command=command, description=text) for command, text in COMMANDS])
         await bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(
-                text="Журнал", web_app=WebAppInfo(url=f"{settings.public_base_url}/app/journal")
-            )
+            menu_button=MenuButtonWebApp(text="Открыть", web_app=WebAppInfo(url=f"{settings.public_base_url}/app"))
         )
         me = await bot.get_me()
-        print(f"configured @{me.username} ({me.first_name}); menu button → {settings.public_base_url}/app/journal")
+        print(f"configured @{me.username} ({me.first_name}); menu button → {settings.public_base_url}/app")
     finally:
         await bot.session.close()
 

@@ -23,10 +23,11 @@ from romantika.services import content, freezes, media, people, stamps
 
 @dataclass(frozen=True, slots=True)
 class IncomingFile:
-    """One attachment of a Telegram message, before we have downloaded it."""
+    """One attachment of a report, before the bytes are on our disk."""
 
     kind: ReportKind
-    file_id: str
+    file_id: str | None
+    """Telegram's id; None for a file uploaded through the Mini App (stored by `MediaStore.save_upload`)."""
     file_unique_id: str | None = None
     mime: str | None = None
     size: int | None = None
@@ -257,6 +258,18 @@ async def cancel(session: AsyncSession, *, user_id: int, report_id: int, now: da
     stamp.level = level.value
     await session.flush()
     return CancelResult(ok=True, stamp_level=level)
+
+
+async def count_for_week(session: AsyncSession, *, user_id: int, week_id: int) -> int:
+    """Live (not cancelled) reports of one participant for one week."""
+    from sqlalchemy import func
+
+    query = select(func.count(models.Report.id)).where(
+        models.Report.user_id == user_id,
+        models.Report.week_id == week_id,
+        models.Report.deleted_at.is_(None),
+    )
+    return int((await session.execute(query)).scalar_one())
 
 
 async def _has_report(session: AsyncSession, *, user_id: int, week_id: int) -> bool:

@@ -38,7 +38,8 @@ class JournalMedia:
     media_id: uuid.UUID
     path: str
     downloaded: bool
-    tg_file_id: str
+    tg_file_id: str | None
+    """None until a Mini App upload has been sent to Telegram once; the bot then sends from disk."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +90,11 @@ async def build(session: AsyncSession, *, season_id: int, user_id: int, today: d
         weeks_total=len(weeks),
         season_words=(await words.season_dictionary(session, season_id, today=today)).week_words,
     )
+
+
+async def wish_for(session: AsyncSession, *, season_id: int, user_id: int) -> str | None:
+    """Mila's wish for the journal, if she has written one."""
+    return await wishes.get_wish(session, season_id, user_id)
 
 
 async def _quotes(session: AsyncSession, *, season_id: int, user_id: int) -> dict[int, str]:

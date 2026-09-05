@@ -85,9 +85,7 @@ class ContextMiddleware(BaseMiddleware):
                 if season is not None:
                     await people.ensure_member(session, season.id, user.id, now=now)
                 is_admin = user.is_admin or self.settings.is_admin(user.id)
-                admin_chat = self.settings.admin_chat_id or (
-                    self.settings.admin_ids[0] if self.settings.admin_ids else None
-                )
+                admin_chat = self.settings.admin_chat
                 data.update(
                     session=session,
                     settings=self.settings,

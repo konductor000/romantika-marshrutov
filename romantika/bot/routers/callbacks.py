@@ -19,6 +19,7 @@ from romantika.domain.types import StampLevel
 from romantika.services import achievements, content, facts, links, people, reports
 from romantika.services.content import SeasonDTO
 from romantika.services.gateways import TelegramGateway
+from romantika.services.media import MediaStore
 from romantika.services.people import UserDTO
 from romantika.texts import ru
 
@@ -44,6 +45,7 @@ async def handle_callback(
     now: datetime,
     today: date,
     telegram: TelegramGateway,
+    media_store: MediaStore,
 ) -> None:
     data = query.data or ""
     chat_id = query.message.chat.id if query.message is not None else user.id
@@ -65,6 +67,7 @@ async def handle_callback(
             now,
             today,
             telegram,
+            media_store,
         )
     except (ValueError, KeyError, IndexError) as exc:
         # Data no keyboard of ours produces (an old client, a forged button): answer, do not crash.
@@ -87,6 +90,7 @@ async def _dispatch(
     now: datetime,
     today: date,
     telegram: TelegramGateway,
+    media_store: MediaStore,
 ) -> None:
 
     # A button ends whatever the bot was waiting for (DOMAIN §10.8): otherwise a stale «пиши
@@ -174,7 +178,7 @@ async def _dispatch(
     if head == "more" and len(parts) == 2:
         await answer(query)
         if parts[1] == "journal":
-            await common.send_journal(bot, chat_id, session, season, user.id, today, settings, own=True)
+            await common.send_journal(bot, chat_id, session, season, user.id, today, settings, media_store, own=True)
         elif parts[1] == "write":
             await people.set_dialog_state(session, user.id, "letter", now=now)
             await safe_send(bot, chat_id, ru.WRITE_PROMPT)
@@ -189,7 +193,7 @@ async def _dispatch(
 
     if head == "journal":
         await answer(query)
-        await common.send_journal(bot, chat_id, session, season, user.id, today, settings, own=True)
+        await common.send_journal(bot, chat_id, session, season, user.id, today, settings, media_store, own=True)
         return
 
     if head == "addword":

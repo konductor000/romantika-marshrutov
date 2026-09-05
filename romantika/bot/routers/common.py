@@ -7,15 +7,16 @@ from datetime import date
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
+from aiogram.types import FSInputFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.bot import keyboards
 from romantika.bot.send import safe_send
 from romantika.config import Settings
-from romantika.domain.calendar import julian_day
 from romantika.domain.tzolkin import tzolkin_day
 from romantika.services import content, facts, freezes, journal, passport, people, words
-from romantika.services.content import SeasonDTO, WeekDTO
+from romantika.services.content import SeasonDTO
+from romantika.services.media import MediaStore
 from romantika.services.people import UserDTO
 from romantika.texts import ru
 
@@ -33,10 +34,6 @@ async def send_task(bot: Bot, chat_id: int, session: AsyncSession, season: Seaso
     await safe_send(bot, chat_id, ru.task_text(week), reply_markup=keyboards.task_buttons(week.number))
 
 
-def _released(weeks: list[WeekDTO], today: date) -> list[WeekDTO]:
-    return [week for week in weeks if week.word and week.starts_on <= today]
-
-
 async def send_today(
     bot: Bot, chat_id: int, session: AsyncSession, season: SeasonDTO | None, today: date, settings: Settings
 ) -> None:
@@ -45,10 +42,7 @@ async def send_today(
         return
     weeks = await content.weeks(session, season.id)
     current = await content.current_week(session, season.id, today=today)
-    released = _released(weeks, today)
-    word_week = current if current is not None and current.word else (released[-1] if released else None)
-    older = [week for week in released if word_week is None or week.number != word_week.number]
-    memory = older[julian_day(today) % len(older)] if len(older) >= 2 else None
+    word_week, memory = content.daily_words(weeks, current, today)
     tz = tzolkin_day(today) if season.daily_kind == "tzolkin" else None
     text = ru.today_text(today, tzolkin=tz, word_week=word_week, memory_week=memory, note=season.daily_note)
     markup = keyboards.calendar_button(settings.public_base_url) if tz is not None else None
@@ -107,6 +101,7 @@ async def send_journal(
     user_id: int,
     today: date,
     settings: Settings,
+    media_store: MediaStore,
     *,
     own: bool,
 ) -> None:
@@ -117,8 +112,16 @@ async def send_journal(
     level = (await passport.build(session, season_id=season.id, user_id=user_id, today=today)).level
     await safe_send(bot, chat_id, ru.journal_text(view, level))
     for item in view.media[:10]:
+        # A Mini App upload has no Telegram id until the worker has sent it once; it is on our
+        # disk from the start, so it goes as a file. Anything not downloaded yet is skipped.
+        if item.tg_file_id is not None:
+            photo: str | FSInputFile = item.tg_file_id
+        elif item.downloaded:
+            photo = FSInputFile(media_store.full_path(item.path))
+        else:
+            continue
         try:
-            await bot.send_photo(chat_id, item.tg_file_id)
+            await bot.send_photo(chat_id, photo)
         except TelegramAPIError as exc:
             logger.warning(
                 "journal_photo_failed", extra={"chat_id": chat_id, "media_id": str(item.media_id), "error": str(exc)}

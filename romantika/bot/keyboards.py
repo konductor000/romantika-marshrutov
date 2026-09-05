@@ -72,8 +72,8 @@ def more_menu(public_base_url: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✉️ Написать Миле", callback_data="more:write")],
         [InlineKeyboardButton(text="❔ Помощь", callback_data="more:help")],
     ]
-    if button := _web_app_button("🗓 Открыть журнал в приложении", f"{public_base_url}/app/journal"):
-        rows.insert(1, [button])
+    if button := _web_app_button("📱 Открыть приложение", f"{public_base_url}/app"):
+        rows.insert(0, [button])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -105,13 +105,13 @@ def report_buttons(week_number: int, level: StampLevel, report_id: int) -> Inlin
 
 def passport_buttons(public_base_url: str) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text="📔 Что будет в конце сезона", callback_data="endofseason")]]
-    if button := _web_app_button("🗓 Открыть журнал в приложении", f"{public_base_url}/app/journal"):
+    if button := _web_app_button("📱 Паспорт в приложении", f"{public_base_url}/app/passport"):
         rows.append([button])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def journal_app_button(public_base_url: str) -> InlineKeyboardMarkup | None:
-    button = _web_app_button("🗓 Открыть журнал в приложении", f"{public_base_url}/app/journal")
+    button = _web_app_button("📱 Журнал в приложении", f"{public_base_url}/app/journal")
     return InlineKeyboardMarkup(inline_keyboard=[[button]]) if button else None
 
 

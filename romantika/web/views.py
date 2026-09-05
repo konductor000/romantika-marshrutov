@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from romantika.config import Settings
+from romantika.domain.calendar import to_moscow
 from romantika.domain.types import WeekState
-from romantika.services import freezes, journal, passport, people
+from romantika.domain.tzolkin import tzolkin_day
+from romantika.services import content, freezes, journal, passport, people, reports
 from romantika.services.content import SeasonDTO, WeekDTO
 from romantika.services.passport import PassportView
+from romantika.texts import ru
 from romantika.web import schemas
 
 
@@ -116,3 +120,89 @@ async def journal_out(
         facts=[f.text for f in jview.facts],
         wish=jview.wish,
     )
+
+
+def week_word_out(week: WeekDTO) -> schemas.WeekWordOut:
+    return schemas.WeekWordOut(
+        week_number=week.number, title=week.title, word=week.word, word_ru=week.word_ru, meaning=week.word_meaning
+    )
+
+
+async def home_out(
+    session: AsyncSession, *, season: SeasonDTO, user_id: int, today: date, principal_admin: bool, settings: Settings
+) -> schemas.HomeOut:
+    """The «Сегодня» and «Паспорт» screens: everything the bot's task/today/passport show."""
+    view = await passport.build(session, season_id=season.id, user_id=user_id, today=today)
+    reasons = await freezes.reasons(session, season.id, user_id)
+    user = await people.get_user(session, user_id)
+    assert user is not None
+    weeks = view.weeks
+    current = next((w for w in weeks if w.starts_on <= today <= w.ends_on), None)
+    word_week, memory_week = content.daily_words(weeks, current, today)
+    tz = tzolkin_day(today) if season.daily_kind == "tzolkin" else None
+
+    week_out_: schemas.CurrentWeekOut | None = None
+    if current is not None:
+        intents = await people.intents(session, season_id=season.id, week_id=current.id)
+        choice = intents.get(user_id)
+        level = view.stamps.get(current.number)
+        base = week_out(
+            current,
+            view.breakdown.states.get(current.number, WeekState.CURRENT),
+            level.value if level else None,
+            reveal=True,
+        )
+        week_out_ = schemas.CurrentWeekOut(
+            **base.model_dump(),
+            intent=choice.value if choice else None,
+            reports_count=await reports.count_for_week(session, user_id=user_id, week_id=current.id),
+            deadline=f"воскресенье {current.ends_on:%d.%m}, 18:00",
+        )
+    upcoming = next((w for w in weeks if w.starts_on > today), None)
+    wish = await journal.wish_for(session, season_id=season.id, user_id=user_id)
+    return schemas.HomeOut(
+        season=season_out(season),
+        user=schemas.Me(id=user.id, first_name=user.first_name, username=user.username, is_admin=principal_admin),
+        today=schemas.TodayOut(
+            date=today,
+            tzolkin=None
+            if tz is None
+            else schemas.TzolkinOut(
+                number=tz.number,
+                kin=tz.kin,
+                sign_name=tz.sign.name,
+                sign_symbol=tz.sign.symbol,
+                sign_emoji=tz.sign.emoji,
+                short=tz.sign.short,
+                day_advice=tz.sign.day_advice,
+            ),
+            word=week_word_out(word_week) if word_week is not None else None,
+            memory=week_word_out(memory_week) if memory_week is not None else None,
+            note=season.daily_note,
+            calendar_url=f"{settings.public_base_url}/calendar" if tz is not None else None,
+        ),
+        week=week_out_,
+        next_week_starts_on=upcoming.starts_on if upcoming is not None else None,
+        passport=passport_out(view, reasons),
+        weeks=weeks_out(view, today=today),
+        achievements=view.achievements,
+        wish=wish,
+        texts=schemas.TextsOut(
+            greeting=ru.greeting(season),
+            help=ru.HELP,
+            end_of_season=ru.end_of_season_text(season),
+            write_prompt=ru.WRITE_PROMPT,
+            word_prompt=ru.WORD_PROMPT,
+            fact_prompt=ru.FACT_PROMPT,
+            journal_now=ru.JOURNAL_NOW.format(end=ru.date_genitive(season.ends_on)),
+        ),
+        links=schemas.LinksOut(
+            channel_url=settings.channel_url or None,
+            bot_username=settings.bot_username or None,
+            admin_app=principal_admin,
+        ),
+    )
+
+
+def moscow_today(now: datetime) -> date:
+    return to_moscow(now).date()

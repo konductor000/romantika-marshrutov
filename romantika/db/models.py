@@ -276,7 +276,8 @@ class Media(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     report_id: Mapped[int] = mapped_column(ForeignKey("reports.id"), nullable=False, index=True)
-    tg_file_id: Mapped[str] = mapped_column(Text, nullable=False)
+    tg_file_id: Mapped[str | None] = mapped_column(Text)
+    """None for a file uploaded through the Mini App until the worker first sends it to Telegram."""
     tg_file_unique_id: Mapped[str | None] = mapped_column(String(255), index=True)
     mime: Mapped[str | None] = mapped_column(String(255))
     size: Mapped[int | None] = mapped_column(Integer)

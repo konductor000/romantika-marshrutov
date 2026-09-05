@@ -23,7 +23,7 @@ BACKUP_CHECK_INTERVAL = 6 * 3600.0
 
 
 def admin_chat_of(settings: Settings) -> int | None:
-    return settings.admin_chat_id or (settings.admin_ids[0] if settings.admin_ids else None)
+    return settings.admin_chat
 
 
 async def run() -> None:

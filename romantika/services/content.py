@@ -191,6 +191,21 @@ async def current_week(session: AsyncSession, season_id: int, *, today: date) ->
     return None if row is None else _week_dto(row)
 
 
+def daily_words(weeks: list[WeekDTO], current: WeekDTO | None, today: date) -> tuple[WeekDTO | None, WeekDTO | None]:
+    """The word of the day and the «а помнишь?» word (DOMAIN §7).
+
+    The word is the current week's, or the last released one between weeks; the memory word
+    rotates daily over the other released weeks and appears only once there are two of them.
+    """
+    from romantika.domain.calendar import julian_day
+
+    released = [week for week in weeks if week.word and week.starts_on <= today]
+    word_week = current if current is not None and current.word else (released[-1] if released else None)
+    older = [week for week in released if word_week is None or week.number != word_week.number]
+    memory = older[julian_day(today) % len(older)] if len(older) >= 2 else None
+    return word_week, memory
+
+
 async def week_by_number(session: AsyncSession, season_id: int, number: int) -> WeekDTO | None:
     query = select(models.Week).where(models.Week.season_id == season_id, models.Week.number == number)
     row = (await session.execute(query)).scalar_one_or_none()

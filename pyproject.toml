@@ -17,6 +17,7 @@ dependencies = [
     "structlog>=24.4,<26",
     "tzdata>=2024.2",
     "aiohttp-socks>=0.9,<1",
+    "python-multipart>=0.0.32",
 ]
 
 [project.optional-dependencies]

@@ -6,8 +6,10 @@
   <meta name="robots" content="noindex">
   <title>{% block title %}Романтика маршрутов{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css?v={{ asset_version }}">
-  <script src="https://telegram.org/js/telegram-web-app.js" async></script>
-  <script src="/static/tg.js?v={{ asset_version }}" defer></script>
+  {# Telegram's Mini App bridge, served from here: telegram.org is slow or unreachable from
+     some networks, and an app that cannot read initData shows «open it from the bot». #}
+  <script src="/static/vendor/telegram-web-app.js?v={{ asset_version }}"></script>
+  <script src="/static/tg.js?v={{ asset_version }}"></script>
   {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">

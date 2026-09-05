@@ -17,6 +17,7 @@ from romantika.bot.send import safe_send
 from romantika.config import Settings
 from romantika.services import content, facts, links, people, words
 from romantika.services.content import SeasonDTO
+from romantika.services.media import MediaStore
 from romantika.services.people import DialogStateDTO, UserDTO
 from romantika.texts import ru
 
@@ -92,6 +93,7 @@ async def handle_text(
     dialog: DialogStateDTO | None,
     now: datetime,
     today: date,
+    media_store: MediaStore,
 ) -> None:
     text = (message.text or "").strip()
     chat_id = message.chat.id
@@ -149,7 +151,9 @@ async def handle_text(
                 await safe_send(bot, chat_id, "Не нашла такого. Список: /who")
                 return
             target = found.id
-        await common.send_journal(bot, chat_id, session, season, target, today, settings, own=target == user.id)
+        await common.send_journal(
+            bot, chat_id, session, season, target, today, settings, media_store, own=target == user.id
+        )
     elif action == "write":
         await people.set_dialog_state(session, user.id, "letter", now=now)
         await safe_send(bot, chat_id, ru.WRITE_PROMPT)

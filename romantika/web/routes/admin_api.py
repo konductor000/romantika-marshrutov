@@ -8,7 +8,21 @@ from sqlalchemy import select
 from romantika.db import models
 from romantika.domain import rules
 from romantika.domain.types import StampLevel, WeekState
-from romantika.services import achievements, content, facts, freezes, journal, passport, people, stamps, summary, wishes
+from romantika.services import (
+    achievements,
+    content,
+    facts,
+    freezes,
+    journal,
+    notify,
+    passport,
+    people,
+    reminders,
+    stamps,
+    summary,
+    wishes,
+)
+from romantika.texts import ru
 from romantika.web import schemas, views
 from romantika.web.deps import AdminDep, NowDep, SeasonDep, SessionDep, TodayDep
 
@@ -311,3 +325,35 @@ async def audit(_: AdminDep, session: SessionDep, limit: int = 100) -> list[sche
         )
         for row in (await session.execute(query)).scalars()
     ]
+
+
+# --- what the bot panel also has: reminders, a message to a participant -----------
+
+
+@router.get("/reminders", response_model=schemas.RemindersOut)
+async def reminders_state(_: AdminDep, session: SessionDep) -> schemas.RemindersOut:
+    return schemas.RemindersOut(enabled=await reminders.enabled(session))
+
+
+@router.put("/reminders", response_model=schemas.RemindersOut)
+async def reminders_toggle(body: schemas.RemindersIn, _: AdminDep, session: SessionDep) -> schemas.RemindersOut:
+    """The Thursday/Sunday auto-reminders switch (DOMAIN §8); same setting as `/reminders`."""
+    await reminders.set_enabled(session, body.enabled)
+    return schemas.RemindersOut(enabled=body.enabled)
+
+
+@router.post("/remind", response_model=schemas.QueuedOut, status_code=status.HTTP_202_ACCEPTED)
+async def remind_now(admin: AdminDep, session: SessionDep, season: SeasonDep, now: NowDep) -> schemas.QueuedOut:
+    """«Напомнить сейчас»: the worker sends the texts and tells Mila how many went out."""
+    job_id = await notify.enqueue_reminders_now(session, season_id=season.id, requested_by=admin.user.id, now=now)
+    return schemas.QueuedOut(job_id=job_id)
+
+
+@router.post("/participants/{user_id}/message", response_model=schemas.QueuedOut, status_code=status.HTTP_202_ACCEPTED)
+async def message_participant(
+    user_id: int, body: schemas.TextIn, _: AdminDep, session: SessionDep, season: SeasonDep, now: NowDep
+) -> schemas.QueuedOut:
+    """A reply to a participant from the admin app — delivered as «Мила ответила…» in the bot."""
+    await _require_member(session, season, user_id, now)
+    job_id = await notify.enqueue_message(session, chat_id=user_id, text=ru.reply_to_author(body.text.strip()), now=now)
+    return schemas.QueuedOut(job_id=job_id)

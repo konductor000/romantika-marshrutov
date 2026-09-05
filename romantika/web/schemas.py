@@ -230,3 +230,165 @@ class AchievementTypeOut(BaseModel):
     name: str
     description: str
     label: str
+
+
+# --- the participant Mini App (ARCHITECTURE §8.1) --------------------------------
+
+
+class TzolkinOut(BaseModel):
+    number: int
+    kin: int
+    sign_name: str
+    sign_symbol: str
+    sign_emoji: str
+    short: str
+    day_advice: str
+
+
+class WeekWordOut(BaseModel):
+    week_number: int
+    title: str = ""
+    word: str
+    word_ru: str = ""
+    meaning: str = ""
+
+
+class TodayOut(BaseModel):
+    date: date
+    tzolkin: TzolkinOut | None
+    word: WeekWordOut | None
+    memory: WeekWordOut | None
+    note: str
+    calendar_url: str | None
+
+
+class CurrentWeekOut(WeekOut):
+    intent: Literal["take", "try", "skip"] | None = None
+    reports_count: int = 0
+    deadline: str = ""
+
+
+class TextsOut(BaseModel):
+    """Bot texts the app shows verbatim (HTML with <b>/<i> only), so the two never drift."""
+
+    greeting: str
+    help: str
+    end_of_season: str
+    write_prompt: str
+    word_prompt: str
+    fact_prompt: str
+    journal_now: str
+
+
+class LinksOut(BaseModel):
+    channel_url: str | None
+    bot_username: str | None
+    admin_app: bool
+
+
+class HomeOut(BaseModel):
+    season: SeasonOut
+    user: Me
+    today: TodayOut
+    week: CurrentWeekOut | None
+    next_week_starts_on: date | None
+    passport: PassportOut
+    weeks: list[WeekOut]
+    achievements: list[str]
+    wish: str | None
+    texts: TextsOut
+    links: LinksOut
+
+
+class IntentIn(BaseModel):
+    week_number: int
+    choice: Literal["take", "try", "skip"]
+
+
+class IntentOut(BaseModel):
+    choice: str
+    hint: str
+
+
+class ReportResult(BaseModel):
+    report_id: int
+    week_number: int | None
+    out_of_week: bool
+    level: str
+    stamp_level: str | None
+    freeze_granted: bool
+    message: str
+
+
+class LevelIn(BaseModel):
+    level: Literal["min", "max"]
+
+
+class LevelOut(BaseModel):
+    ok: bool
+    stamp_level: str | None
+    message: str
+
+
+class CancelOut(BaseModel):
+    ok: bool
+    stamp_level: str | None
+    message: str
+
+
+class TextIn(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class MessageOut(BaseModel):
+    message: str
+
+
+class WordAdded(BaseModel):
+    word: str
+    meaning: str
+    freeze_granted: bool
+    message: str
+
+
+class UserWordOut(BaseModel):
+    id: int
+    word: str
+    meaning: str
+    author: str
+    mine: bool
+
+
+class DictionaryOut(BaseModel):
+    week_words: list[WeekWordOut]
+    user_words: list[UserWordOut]
+    about: str
+
+
+class FactItem(BaseModel):
+    id: int
+    text: str
+    author: str | None
+    mine: bool
+    created_at: datetime
+
+
+class FactsOut(BaseModel):
+    about: str
+    facts: list[FactItem]
+
+
+# --- admin extras -----------------------------------------------------------------
+
+
+class RemindersOut(BaseModel):
+    enabled: bool
+
+
+class RemindersIn(BaseModel):
+    enabled: bool
+
+
+class QueuedOut(BaseModel):
+    job_id: int
+    status: str = "queued"

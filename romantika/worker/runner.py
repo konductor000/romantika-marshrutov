@@ -10,9 +10,10 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from romantika.db import models
 from romantika.domain.calendar import to_moscow
 from romantika.pdf.journal import render_journal_pdf
-from romantika.services import content, jobs, journal, passport
+from romantika.services import content, jobs, journal, links, notify, passport, reminders
 from romantika.services.gateways import TelegramGateway
 from romantika.services.media import MediaStore
 
@@ -65,10 +66,60 @@ async def handle_broadcast(session: AsyncSession, payload: dict[str, Any], ctx: 
     return {"sent": sent}
 
 
+async def handle_telegram_notify(session: AsyncSession, payload: dict[str, Any], ctx: Context) -> dict[str, Any] | None:
+    """Deliver what the web layer queued (`services.notify`): a text, then the files.
+
+    A file uploaded through the Mini App gets its Telegram `file_id` here, on its first trip
+    to Telegram; the bot can then re-send it by id (journal photos) without reading the disk.
+    With `link` present every sent message is remembered for Mila's reply flow.
+    """
+    chat_id = int(payload["chat_id"])
+    text = payload.get("text")
+    link = payload.get("link")
+    message_ids: list[int] = []
+    skipped = 0
+    if text:
+        message_ids.append(await ctx.telegram.send_text(chat_id, str(text)))
+    for raw in payload.get("media_ids", []):
+        row = await session.get(models.Media, uuid.UUID(str(raw)))
+        if row is None or row.downloaded_at is None or row.hidden_at is not None:
+            skipped += 1
+            logger.warning("notify_media_skipped", extra={"media_id": str(raw), "chat_id": chat_id})
+            continue
+        sent = await ctx.telegram.send_file(chat_id, ctx.media_store.full_path(row.path), mime=row.mime)
+        message_ids.append(sent.message_id)
+        if row.tg_file_id is None and sent.file_id:
+            row.tg_file_id = sent.file_id
+    if link:
+        for message_id in message_ids:
+            await links.remember(
+                session,
+                admin_chat_id=chat_id,
+                admin_message_id=message_id,
+                user_id=int(link["user_id"]),
+                report_id=link.get("report_id"),
+                week_id=link.get("week_id"),
+                now=ctx.now,
+            )
+    return {"sent": len(message_ids), "skipped": skipped}
+
+
+async def handle_reminders_now(session: AsyncSession, payload: dict[str, Any], ctx: Context) -> dict[str, Any] | None:
+    """«Напомнить сейчас» pressed in the admin Mini App: same texts and recipients as the bot."""
+    season_id = int(payload["season_id"])
+    result = await reminders.send(session, season_id=season_id, week_number=None, telegram=ctx.telegram, now=ctx.now)
+    requested_by = payload.get("requested_by")
+    if requested_by is not None:
+        await ctx.telegram.send_message(int(requested_by), result.describe())
+    return {"sent": result.sent, "total": result.total}
+
+
 HANDLERS: dict[str, Handler] = {
     "media_download": handle_media_download,
     "journal_pdf": handle_journal_pdf,
     "broadcast": handle_broadcast,
+    notify.TELEGRAM_NOTIFY: handle_telegram_notify,
+    notify.REMINDERS_NOW: handle_reminders_now,
 }
 
 
