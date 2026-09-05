@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.1.0 — 2026-09-05 (Mini App round two, new bot)
+
+For participants: reports can be edited in the app while the week is open (text and files;
+the stamp follows), «изменено» marks the edited ones; a lost network answer no longer makes a
+second report; after a maximum the app no longer offers «это был минимум»; file limits (10 files,
+50 MB) are explained before the upload; the deadline names the real last day of the week (the
+closing week ends on a Wednesday); the PDF journal is a proper journal (title page with the
+passport, weeks with texts and photos, dictionary, facts, Mila's word); the day after the season
+ends everyone with a stamp gets their journal automatically.
+
+For Mila: «Письма» — an inbox of everything that is not a report, with replies from the app or
+the chat marking the same letter; «Напомнить сейчас» is about the week on screen and refuses
+past weeks; the week editor keeps its state after saving; explicit stamp choice with a confirm
+before removing; people filters «Без штампа на неделе» / «Взялись и молчат»; the audit log names
+participant edits.
+
+Under the hood: `reports.client_id`, `reports.edited_at`, `letters`, `admin_links.letter_id`
+(migration b7d4e2a90c15); jobs `season_journals`; a local stand with a fake Bot API
+(`scripts/dev-stack.sh`); vendored Telegram bridge; production on `@romantika_marshrutov_bot`.
+
 ## v2.0.0 — 2026-09-04 (rewrite)
 
 For participants: same bot, same buttons and texts; voice and audio now count as a minimum

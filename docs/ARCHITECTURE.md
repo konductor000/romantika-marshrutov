@@ -268,10 +268,27 @@ destination: Path)`, later stages add `send_message(chat_id, text)` and
 - `GET /healthz` → `{"status":"ok","db":true}`.
 - Public: `GET /` season page (SSR from DB; future weeks not in HTML), `GET /calendar`
   (tzolkin Mini App; signs embedded from data/tzolkin.json).
-- Mini Apps: `GET /app/journal`, `GET /app/admin` (HTML shells; JS calls `/api`).
+- Mini Apps: `GET /app` and `GET /app/{tab}` (participant: today · passport · journal · words ·
+  more), `GET /app/admin` (Mila: week · people · letters · content · more; facts from «Ещё»).
+  HTML shells; JS calls `/api`.
 - Auth: header `X-Telegram-Init-Data` validated per Telegram docs (HMAC-SHA256 with
-  `WebAppData` key, `auth_date` ≤ 24h). Dev bypass only when `settings.dev_auth_user_id` is
-  set and `settings.env == "dev"`.
+  `WebAppData` key, `auth_date` ≤ 24h); `POST /api/session` turns it into the `rm_session`
+  cookie so `<img src="/media/…">` loads. Dev bypass only when `settings.dev_auth_user_id` is
+  set and `settings.env == "dev"` (header `X-Dev-Auth: 1`); the local stand instead signs real
+  initData with `python -m romantika.ops.dev_link` (`?init=` query parameter).
+- The bridge `telegram-web-app.js` is vendored under `static/vendor/` (telegram.org is slow or
+  blocked on some networks; without initData the app can only say «open it from the bot»).
+- Participant writes: `POST /api/reports` (multipart `text`, `files[]`, `client_id` — a retry
+  with the same `client_id` answers 200 with the report already made, never a second report),
+  `PATCH /api/reports/{id}` (multipart `text`, `remove[]` media ids, `files[]`; allowed while
+  the report's week is open — DOMAIN §2; recomputes the stamp, hides removed files, copies the
+  new version to Mila, receipts the author; 403 foreign, 409 cancelled or week over, 413 over
+  10 files, 422 empty), `POST /api/reports/{id}/cancel`, `POST /api/weeks/{n}/level`,
+  `POST /api/intent`, `POST /api/letters`, `POST /api/words`, `POST /api/facts`.
+- Letters: everything sent to Mila that is not a report — «Написать Миле» (bot or app),
+  a message between weeks, a report taken back — is a `letters` row (`source` bot | app |
+  out_of_week | not_report) with `reply_text/replied_at`; the admin copy's `admin_links` row
+  carries `letter_id`, so a chat reply marks the same letter answered as a reply from the app.
 - API (JSON, all under `/api`, Pydantic schemas in `romantika/web/schemas.py`):
   `GET /api/me`, `GET /api/journal` (passport + weeks + reports + media urls + achievements +
   words + wishes), `POST /api/journal/pdf` (enqueue) / `GET /api/journal/pdf/{job_id}`,
@@ -280,7 +297,11 @@ destination: Path)`, later stages add `send_message(chat_id, text)` and
   `GET/POST/PATCH /api/admin/achievement-types`, `GET/POST/DELETE /api/admin/facts`,
   `GET /api/admin/participants`, `GET /api/admin/participants/{id}`,
   `PUT /api/admin/participants/{id}/stamps/{week}`, `POST .../freezes`, `POST .../achievements`,
-  `PUT .../wish`, `GET /api/admin/summary?week=`, `GET /api/admin/audit`.
+  `PUT .../wish`, `POST .../message`, `GET /api/admin/summary?week=` (+ `week_ended`),
+  `POST /api/admin/remind` body `{week_number?}` (404 unknown week, 409 past week),
+  `GET /api/admin/letters` → `{unanswered, letters[]}`, `POST /api/admin/letters/{id}/reply`,
+  `GET/PUT /api/admin/reminders`, `GET /api/admin/audit`. `GET /api/admin/participants` also
+  carries `week_intent` / `week_level` for the current week (the people filters).
 - Admin = `user.is_admin or user.id in settings.admin_ids`.
 - Front-end: vanilla JS modules in `romantika/web/static/`, Telegram `telegram-web-app.js`
   from `https://telegram.org/js/telegram-web-app.js`; `tg.expand()`; works in a plain browser
@@ -321,10 +342,15 @@ destination: Path)`, later stages add `send_message(chat_id, text)` and
 ## 9. Worker
 
 `python -m romantika.worker` runs forever: (a) job loop — claims one job at a time
-(`FOR UPDATE SKIP LOCKED`), kinds: `media_download`, `journal_pdf` (render + `sendDocument`
-to the user + store path under `MEDIA_DIR/journals/`), `broadcast`; retries with backoff,
-max 5 attempts; (b) schedulers ticking every 60 s in Moscow time: reminders (Thu ≥19:00,
-Sun ≥12:00, deduped by `reminder_log`, catch-up within the same day), nightly
+(`FOR UPDATE SKIP LOCKED`), kinds: `telegram_notify` (everything the web wants said in a chat:
+text + media ids, with the `admin_links` row for Mila's replies — the web never talks to
+Telegram), `reminders_now` (payload `week_number` optional), `media_download`, `journal_pdf`
+(render + `sendDocument` to the user + store path under `MEDIA_DIR/journals/`),
+`season_journals` (one `journal_pdf` per participant with a stamp, `requested_via: season_end`),
+`broadcast`; retries with backoff, max 5 attempts; (b) schedulers ticking every 60 s in Moscow
+time: reminders (Thu ≥19:00, Sun ≥12:00, deduped by `reminder_log`, catch-up within the same
+day), `season_end_tick` (the day after the season's last day, ≥ 12:00, once per season —
+`reminder_log` key `<slug>:journals` — queues `season_journals`), nightly
 `backup_status_check` (reads `/backups/last-verify.json`, alerts admin if stale > 8 days or failed).
 
 ### 9.1 Worker API (binding; mirrors `tests/acceptance/test_stage5_worker.py`)
@@ -350,11 +376,25 @@ Sun ≥12:00, deduped by `reminder_log`, catch-up within the same day), nightly
 
 ## 10. PDF
 
+`romantika/pdf/templates/journal.html` reads like a travel journal: a title page (season, name,
+dates, level, three totals, the passport grid with ★/✓, the legend), then one section per stamped
+week — dates, every report text of the week, up to 6 photos of that week (36 per journal), a
+note for files that stayed in the app — then achievements, the dictionary (week words + the
+participant's own), the facts and Mila's wish. Photos are embedded by `file://` path from
+`MEDIA_DIR`; only downloaded images are used. Fonts: DejaVu Serif for headings, DejaVu Sans for
+text (present in the image), colour emoji via Noto.
+
 `romantika/pdf/journal.py`: `render_journal_html(view: JournalView) -> str` (Jinja) and
 `render_journal_pdf(view) -> bytes` (WeasyPrint). Fonts: DejaVu (installed in image) with
 Cyrillic. Photos referenced by absolute file paths under MEDIA_DIR (no network).
 
 ## 11. Ops
+
+Local stand without Telegram (`scripts/dev-stack.sh up`): Postgres in Docker, the fake Bot API
+(`python -m romantika.ops.fake_telegram`, `TELEGRAM_API_BASE=http://127.0.0.1:8081` — the
+bot polls it, the worker delivers through it; `/_control/text|media|callback` act as a user,
+`/_control/sent` reads what the bot sent), web, bot, worker; `scripts/dev-stack.sh link <id>
+<name>` prints a signed Mini App link. Everything lives under `.dev/` (git-ignored).
 
 - One image `docker/Dockerfile` (python:3.12-slim + tzdata + WeasyPrint deps + fonts-dejavu,
   `uv sync --frozen --no-dev`, non-root user `app` uid 1000). Commands: `bot`, `web`, `worker`,

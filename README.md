@@ -21,6 +21,7 @@ Telegram-бот клуба [@romantika_marshrutov](https://t.me/romantika_marshr
 | Бэкапы и восстановление | `romantika/ops`, `scripts/` | `scripts/backup.sh`, `scripts/restore-verify.sh` |
 | Импорт из старого бота | `romantika/migration` | `python -m romantika.migration.legacy_import --sqlite …` |
 | Контейнеры | `docker/` | `docker compose -f docker/compose.yml --project-directory . up -d` |
+| Локальный стенд без Telegram (заглушка Bot API, подписанные ссылки) | `romantika/ops/fake_telegram.py`, `scripts/dev-stack.sh` | `scripts/dev-stack.sh up` |
 
 ## Локальная разработка
 
@@ -36,6 +37,10 @@ make run-web            # http://127.0.0.1:8010
 make run-bot            # long polling с токеном из .env
 make run-worker
 ```
+
+Полный стенд без Telegram: `scripts/dev-stack.sh up` поднимает Postgres, заглушку Bot API, веб,
+бота и воркер; `scripts/dev-stack.sh link 1001 Алиса` печатает ссылку на Mini App под этим
+пользователем. Подробнее — в RUNBOOK, раздел «Local stand».
 
 Тесты: `tests/acceptance/` — приёмочные контракты по этапам (не менять без обсуждения),
 `tests/unit/`, `tests/integration/`. CI (`.github/workflows/ci.yml`) гоняет то же, что `make check`.

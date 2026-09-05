@@ -74,12 +74,27 @@ Nothing in the stack ever deletes media or participant rows; "removal" is a time
 
 ## Production bot
 
-Decision 2026-09-04 (owner): the legacy data is not migrated; production runs on a **new** bot
-`@romantika_marshrutov_club_bot` created in BotFather on Dmitry's account (ownership can be
-transferred to Mila later via BotFather → /mybots → Transfer Ownership). The stack on the VPS
-runs with its token, a clean database and the seeded Mexico season. Bot name, descriptions,
-commands and the menu button are set through the Bot API:
+Decision 2026-09-04 (owner): the legacy data is not migrated. Since 2026-09-05 production runs
+on **Mila's own bot `@romantika_marshrutov_bot`** (token in `~/.romantika/prod.env` on the Mac
+and in `/opt/stacks/romantika/.env` on the VPS — nowhere else). The interim
+`@romantika_marshrutov_club_bot` on Dmitry's account is unused and may be deleted in BotFather.
+The stack on the VPS runs with a clean database and the seeded Mexico season. Bot name,
+descriptions, commands and the menu button are set through the Bot API:
 `rc exec -T bot python -m romantika.ops.telegram_setup` (idempotent, run after every bot change).
+
+Switching the token: edit `BOT_TOKEN` / `BOT_USERNAME` in the VPS `.env`, `scripts/deploy.sh`
+(or `rc up -d bot web worker`), then `telegram_setup`. Sessions of the Mini App are signed with
+the token, so open links get re-issued by Telegram on the next tap — nothing to migrate.
+
+## Local stand (no Telegram)
+
+`scripts/dev-stack.sh up` — Postgres in Docker (port 55442), a fake Bot API on :8081, web on
+:8010, bot polling the fake, worker delivering through it; season seeded and activated.
+`scripts/dev-stack.sh link 1001 Алиса /app/journal` prints a signed link; `/_control/*` on :8081
+acts as a user (`text`, `media`, `callback`) and reads what the bot sent (`sent?chat_id=`).
+Logs under `.dev/logs/`. `down` removes everything. On macOS WeasyPrint needs
+`DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` (the script sets it; do not wrap the processes in
+`nohup`/`env`, macOS strips `DYLD_*` for system binaries).
 
 ## Cut-over from the legacy bot (kept for reference, not used)
 
