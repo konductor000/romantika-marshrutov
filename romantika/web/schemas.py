@@ -162,6 +162,8 @@ class ParticipantOut(BaseModel):
     """«Берусь / Попробую / Мимо» on the week running now; the people filters read it."""
     week_level: Literal["min", "max"] | None = None
     """The stamp on the week running now, if any."""
+    week_reports: int = 0
+    """Live reports on the week running now — with a stamp Mila removed they still exist."""
 
 
 class ParticipantDetail(BaseModel):

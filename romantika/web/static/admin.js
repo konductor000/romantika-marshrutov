@@ -54,10 +54,14 @@
     window.scrollTo(0, 0);
     closeSheet();
     const render = { week: renderWeek, people: renderPeople, letters: renderLetters, content: renderContent, facts: renderFacts, more: renderMore }[tab];
-    Promise.resolve().then(render).catch((e) => {
+    guarded(render, () => go(tab));
+  }
+  // A screen that throws says so and offers a retry instead of leaving a spinner forever.
+  function guarded(render, retry) {
+    return Promise.resolve().then(render).catch((e) => {
       console.error(e);
       screen.innerHTML = `<div class="empty"><div class="big">😕</div><h2>Не загрузилось</h2><p class="muted">${esc(e && e.message ? e.message : String(e))}</p><button class="btn soft small" id="retry">Попробовать ещё раз</button></div>`;
-      $("retry").addEventListener("click", () => go(tab));
+      $("retry").addEventListener("click", retry);
     });
   }
   const currentWeek = () => state.weeks.find((w) => w.state === "current");
@@ -70,7 +74,7 @@
     const cur = currentWeek();
     const pick = number || (state.week && state.week.week_number) || (cur ? cur.number : state.weeks[0] && state.weeks[0].number);
     screen.innerHTML = `<header class="screen-head"><p class="eyebrow">Сводка недели</p><h1>Неделя</h1></header><label>Какая неделя<select id="week-pick">${weekOptions(pick)}</select></label><div id="week-body">${loading()}</div>`;
-    $("week-pick").addEventListener("change", () => renderWeek(+$("week-pick").value));
+    $("week-pick").addEventListener("change", () => { const n = +$("week-pick").value; guarded(() => renderWeek(n), () => renderWeek(n)); });
     let s;
     try { s = await RM.api("/api/admin/summary?week=" + pick); } catch (e) { $("week-body").innerHTML = `<p class="muted">${esc(e.message)}</p>`; return; }
     state.week = s;
@@ -114,7 +118,8 @@
       if (!cur) return "";
       const stamp = p.week_level === "max" ? "⭐" : p.week_level === "min" ? "✅" : "";
       const intent = p.week_intent === "take" ? "берусь" : p.week_intent === "try" ? "попробую" : p.week_intent === "skip" ? "мимо" : "";
-      return `<div class="sub">неделя ${cur.number}: ${stamp ? stamp + " есть штамп" : intent ? intent + " · пока без отчёта" : "без ответа"}</div>`;
+      const reports = p.week_reports ? `${p.week_reports} ${RM.plural(p.week_reports, "отчёт", "отчёта", "отчётов")}, штамп снят` : "";
+      return `<div class="sub">неделя ${cur.number}: ${stamp ? stamp + " есть штамп" : reports ? reports : intent ? intent + " · пока без отчёта" : "без ответа"}</div>`;
     };
     const draw = () => {
       const q = $("people-q").value.trim().toLowerCase();

@@ -260,6 +260,20 @@ class Recomputed:
     upgraded_to_max: bool
 
 
+async def live_counts(session: AsyncSession, *, season_id: int, week_id: int) -> dict[int, int]:
+    """`{user_id: number of live reports}` on one week, for the admin's people list."""
+    query = (
+        select(models.Report.user_id, func.count())
+        .where(
+            models.Report.season_id == season_id,
+            models.Report.week_id == week_id,
+            models.Report.deleted_at.is_(None),
+        )
+        .group_by(models.Report.user_id)
+    )
+    return {int(user_id): int(count) for user_id, count in (await session.execute(query)).all()}
+
+
 async def _recompute_stamp(
     session: AsyncSession, *, season_id: int, user_id: int, week_id: int, now: datetime
 ) -> Recomputed:

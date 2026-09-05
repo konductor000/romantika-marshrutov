@@ -44,6 +44,7 @@ body {
   color: var(--ink);
   font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  overflow-wrap: anywhere;
   overscroll-behavior-y: none;
 }
 body.app-body { min-height: 100vh; }
@@ -118,7 +119,7 @@ dd { margin: 0; }
 .weeklist .title { font-weight: 600; }
 .weeklist .sub { color: var(--muted); font-size: 13px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; }
-.chip { background: var(--accent-soft); border-radius: 999px; padding: 4px 10px; font-size: 14px; }
+.chip { background: var(--accent-soft); border-radius: 999px; padding: 4px 10px; font-size: 14px; max-width: 100%; overflow-wrap: anywhere; }
 .chip.ok { background: var(--ok-soft); }
 .chip.star { background: var(--star-soft); }
 .chip.ice { background: var(--ice-soft); }

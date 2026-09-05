@@ -229,7 +229,7 @@ async def home_out(
         achievements=view.achievements,
         wish=wish,
         texts=schemas.TextsOut(
-            greeting=ru.greeting(season),
+            greeting=ru.greeting(season, app=True),
             help=ru.help_text(app=True),
             end_of_season=ru.end_of_season_text(season),
             write_prompt=ru.WRITE_PROMPT,

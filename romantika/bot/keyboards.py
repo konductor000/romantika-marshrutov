@@ -90,17 +90,19 @@ def task_buttons(week_number: int) -> InlineKeyboardMarkup:
 
 
 def report_buttons(week_number: int, level: StampLevel, report_id: int) -> InlineKeyboardMarkup:
-    other = StampLevel.MIN if level is StampLevel.MAX else StampLevel.MAX
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    """`level` is the week's stamp. A maximum never goes down (DOMAIN §2), so once the star
+    is there the only correction left is «это не отчёт» — a «минимум» button would be dead."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if level is not StampLevel.MAX:
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"Это был {ru.level_name(other)}", callback_data=f"level:{week_number}:{other.value}"
+                    text="⭐ Это был максимум", callback_data=f"level:{week_number}:{StampLevel.MAX.value}"
                 )
-            ],
-            [InlineKeyboardButton(text="✉️ Это не отчёт, а сообщение Миле", callback_data=f"notreport:{report_id}")],
-        ]
-    )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="✉️ Это не отчёт, а сообщение Миле", callback_data=f"notreport:{report_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def passport_buttons(public_base_url: str) -> InlineKeyboardMarkup:

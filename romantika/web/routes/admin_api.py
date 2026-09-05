@@ -21,6 +21,7 @@ from romantika.services import (
     passport,
     people,
     reminders,
+    reports,
     stamps,
     summary,
     wishes,
@@ -91,6 +92,7 @@ async def participants(
     users = {u.id: u for u in await people.all_users(session)}
     current = await content.current_week(session, season.id, today=today)
     intents = await people.intents(session, season_id=season.id, week_id=current.id) if current else {}
+    report_counts = await reports.live_counts(session, season_id=season.id, week_id=current.id) if current else {}
     result = []
     for user_id, breakdown in breakdowns.items():
         user = users.get(user_id)
@@ -115,6 +117,7 @@ async def participants(
                 current_streak=breakdown.current_streak,
                 week_intent=intent.value if intent else None,
                 week_level=week_level.value if week_level else None,
+                week_reports=report_counts.get(user_id, 0),
             )
         )
     result.sort(key=lambda p: (p.joined_at, p.id))

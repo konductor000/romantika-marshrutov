@@ -136,10 +136,10 @@ def test_web_app_buttons_need_https() -> None:
     assert keyboards.journal_app_button(HTTPS) is not None
 
 
-def test_report_buttons_offer_the_other_level_and_the_cancellation() -> None:
+def test_report_buttons_offer_the_upgrade_and_the_cancellation() -> None:
+    """A maximum never goes down (DOMAIN §2): with the star there, only «это не отчёт» is left."""
     markup = keyboards.report_buttons(3, StampLevel.MAX, report_id=42)
-    assert data_of(markup) == ["level:3:min", "notreport:42"]
-    assert "минимум" in labels_of(markup)[0]
+    assert data_of(markup) == ["notreport:42"]
 
     markup = keyboards.report_buttons(3, StampLevel.MIN, report_id=42)
     assert data_of(markup) == ["level:3:max", "notreport:42"]

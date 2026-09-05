@@ -126,7 +126,7 @@
     } catch (e) { /* older clients */ }
   };
   RM.alert = function (text) {
-    try { if (tg && tg.showAlert) return tg.showAlert(text); } catch (e) { /* fall through */ }
+    try { if (tg && tg.showAlert && tg.isVersionAtLeast && tg.isVersionAtLeast("6.2")) return tg.showAlert(text); } catch (e) { /* fall through */ }
     RM.toast(text, 4000);
   };
   // Telegram's own dialog inside the client, the browser's outside; resolves to true/false.

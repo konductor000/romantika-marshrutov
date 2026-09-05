@@ -1030,8 +1030,9 @@ async def test_a_second_report_does_not_claim_the_star_was_lost(harness: Harness
     assert "+1 заморозка" not in reply, "the freeze is granted once"
 
     labels = [label for label, _ in harness.session.buttons(ALICE)]
-    assert "Это был минимум" in labels, "DOMAIN §2 keeps the pair of buttons"
-    await harness.callback(ALICE, "level:1:min")
+    assert "Это был минимум" not in labels, "a star never goes down, so the button would be dead"
+    assert any("не отчёт" in label for label in labels)
+    await harness.callback(ALICE, "level:1:min")  # from an older message: still answered, not applied
     alerts = [alert for alert in harness.session.alerts() if alert]
     assert "не понижаю" in alerts[-1], "and pressing it explains the rule"
 

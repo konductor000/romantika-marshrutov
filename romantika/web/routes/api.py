@@ -632,7 +632,9 @@ async def add_word(
         session,
         settings,
         principal,
-        ru.admin_word_added(principal.user.display_name_with_username, body.text.strip()),
+        ru.admin_word_added(
+            principal.user.display_name_with_username, body.text.strip(), week.number if week else None
+        ),
         now=now,
     )
     return schemas.WordAdded(

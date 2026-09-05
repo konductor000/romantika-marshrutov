@@ -103,16 +103,20 @@ def week_end_accusative(week: WeekDTO) -> str:
     return WEEKDAYS_ACCUSATIVE[week.ends_on.weekday()]
 
 
-def greeting(season: SeasonDTO | None) -> str:
+def greeting(season: SeasonDTO | None, *, app: bool = False) -> str:
+    """«О клубе»: in the bot the report is sent right here, in the app — on the «Сегодня» tab."""
     current = escape(season.title) if season else "пока не выбрана"
+    how = (
+        "Чтобы сдать — отправь текст или фото во вкладке «Сегодня». Больше ничего нажимать не надо."
+        if app
+        else "Чтобы сдать — просто пришли сюда текст или фото. Больше нажимать ничего не надо."
+    )
     return (
         "Это бот клуба <b>«Романтика маршрутов»</b>.\n\n"
         "Раз в три месяца рандомайзер выбирает страну, и мы разбираем её "
         f"до мелочей. Сейчас — <b>{current}</b>.\n\n"
         "Каждый понедельник тут появляется задание: минимум на пять минут "
-        "и максимум на вечер. Оба необязательные.\n\n"
-        "Чтобы сдать — просто пришли сюда текст или фото. "
-        "Больше нажимать ничего не надо."
+        f"и максимум на вечер. Оба необязательные.\n\n{how}"
     )
 
 
@@ -124,18 +128,22 @@ GREETING_CTA = "\n\nНачни с «📋 Задание» 👇"
 #: The two surfaces have different buttons, so the answers that point at a button differ.
 _HELP_ITEMS: tuple[tuple[str, str, str | None], ...] = (
     (
-        "Бот записал не то, что нужно",
+        "Записалось не то, что нужно",
         "Текст засчитывается как минимум, фото — как максимум. Если это был максимум, "
         "под ответом бота есть кнопка «⭐ Это был максимум». Текст и фото отчёта можно "
         "поправить в приложении, пока неделя идёт.",
         "Текст засчитывается как минимум, фото — как максимум. Если это был максимум, "
-        "под ответом есть кнопка «⭐ Это был максимум». Текст и фото отчёта можно "
-        "поправить в «Журнале», пока неделя идёт.",
+        "нажми «⭐ Это был максимум» под ответом. Текст и фото отчёта можно поправить "
+        "сразу после отправки или потом в «Журнале», пока неделя идёт.",
     ),
     (
         "Хочу дослать фото или переделать",
-        "Просто пришли ещё раз. Штамп не потеряется, и максимум не понизится обратно до минимума.",
-        None,
+        "Просто пришли ещё раз: повторный отчёт штамп не понижает, а фото поднимет его до "
+        "максимума. Другое дело — правка уже присланного отчёта в приложении: если убрать из "
+        "него все фото, штамп пересчитается по тому, что осталось.",
+        "Просто отправь ещё один отчёт: повторный штамп не понижает, а фото поднимет его до "
+        "максимума. Другое дело — правка уже присланного: если убрать из него все фото, штамп "
+        "пересчитается по тому, что осталось.",
     ),
     (
         "Пропуск недели",
@@ -585,12 +593,14 @@ def admin_letter_header(author: str, text: str | None, *, corrected: bool = Fals
     )
 
 
-def admin_word_added(author: str, text: str) -> str:
-    return f"📖 Новое слово от {escape(author)}: {escape(text)}"
+def admin_word_added(author: str, text: str, week_number: int | None = None) -> str:
+    where = f" · неделя {week_number}" if week_number else ""
+    return f"📖 Новое слово от {escape(author)}{where}: {escape(text)}"
 
 
-def admin_fact_added(author: str, text: str) -> str:
-    return f"💡 Новый факт от {escape(author)}: {escape(text)}"
+def admin_fact_added(author: str, text: str, week_number: int | None = None) -> str:
+    where = f" · неделя {week_number}" if week_number else ""
+    return f"💡 Новый факт от {escape(author)}{where}: {escape(text)}"
 
 
 def admin_out_of_week_header(author: str, text: str | None, kind: str) -> str:

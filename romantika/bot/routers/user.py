@@ -192,7 +192,9 @@ async def answer_dialog(
         await safe_send(
             bot, chat_id, ru.WORD_SAVED + (ru.WORD_FREEZE_BONUS if result.freeze_granted else ""), reply_markup=keyboard
         )
-        await common.notify_admin(bot, admin_chat, user, ru.admin_word_added(author, text))
+        await common.notify_admin(
+            bot, admin_chat, user, ru.admin_word_added(author, text, week.number if week else None)
+        )
         return
 
     if dialog.state == "letter":

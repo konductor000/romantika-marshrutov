@@ -490,3 +490,20 @@ async def test_mila_can_give_herself_a_freeze(app: App) -> None:
     r = await app.client.post(f"/api/admin/participants/{ADMIN_ID}/freezes", json={"reason": "manual"}, headers=admin)
     assert r.status_code == 201 and r.json()["granted"] is True
     assert await app.jobs("telegram_notify") == [], "she does not get a message from herself"
+
+
+async def test_the_people_list_says_reports_exist_when_the_stamp_was_removed(app: App) -> None:
+    admin = app.headers(ADMIN_ID, "Мила")
+    await app.client.post("/api/reports", data={"text": "есть отчёт"}, headers=app.headers(ALICE))
+    await app.client.put(f"/api/admin/participants/{ALICE}/stamps/1", json={"level": None}, headers=admin)
+    people_out = (await app.client.get("/api/admin/participants", headers=admin)).json()
+    alice = next(p for p in people_out if p["id"] == ALICE)
+    assert alice["week_level"] is None and alice["week_reports"] == 1
+
+
+async def test_the_app_texts_speak_of_the_app(app: App) -> None:
+    home = (await app.client.get("/api/home", headers=app.headers(ALICE))).json()
+    assert "во вкладке «Сегодня»" in home["texts"]["greeting"]
+    assert "пришли сюда" not in home["texts"]["greeting"]
+    assert "Записалось не то, что нужно" in home["texts"]["help"]
+    assert "в «Журнале»" in home["texts"]["help"]

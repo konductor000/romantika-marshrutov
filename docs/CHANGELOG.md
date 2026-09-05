@@ -27,6 +27,7 @@ when a later report earned the week and was then cancelled); the PDF footer is b
 template had HTML-escaped its CSS string); a retried edit in flight is applied once; a NUL
 byte or an over-long attempt id is a 422, not a 500 or a collapsed report; the Sunday draft
 quotes one line per person; the bot's «это не отчёт» makes one letter like the app's.
+From the UI critic: no dead «Это был минимум» button in the bot once the star is there; the FAQ says honestly what an edit does to the stamp; «О клубе» in the app points at the «Сегодня» tab; the task card follows the stamp right after sending or upgrading; a word without spaces no longer widens the page; the people list says «отчёты есть, штамп снят» instead of «пока без отчёта»; two gendered lines that slipped into the first round are neutral again.
 
 Under the hood: `reports.client_id`, `reports.edited_at`, `letters`, `admin_links.letter_id`
 (migration b7d4e2a90c15); jobs `season_journals`; a local stand with a fake Bot API

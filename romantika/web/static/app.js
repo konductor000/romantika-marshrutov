@@ -203,6 +203,7 @@
       state.sent = r;
       state.clientId = RM.uid();
       await refreshHome();
+      renderToday(); // the task card above changes too: the intent question gives way to the stamp
       showResult(r);
     } catch (e) {
       RM.haptic("error");
@@ -232,7 +233,7 @@
       try {
         const res = await RM.api(`/api/weeks/${r.week_number}/level`, { method: "POST", body: { level: "max" } });
         RM.alert(res.message.replace(/<[^>]+>/g, ""));
-        if (res.ok) { r.stamp_level = res.stamp_level; r.level = "max"; r.message = res.message; await refreshHome(); showResult(r); }
+        if (res.ok) { r.stamp_level = res.stamp_level; r.level = "max"; r.message = res.message; await refreshHome(); renderToday(); showResult(r); }
       } catch (e) { RM.toast(e.message); }
     });
     if ($("edit-sent")) $("edit-sent").addEventListener("click", async () => {
@@ -462,12 +463,12 @@
     let out = `<header class="screen-head"><p class="eyebrow">Романтика маршрутов</p><h1>Ещё</h1></header>`;
     out += `<div class="card"><h2>💡 Что мы узнали про ${esc(f.about)}</h2>
       ${f.facts.length ? `<ol style="padding-left:20px;margin:0 0 10px">${f.facts.map((x) => `<li${x.mine ? ' style="font-weight:600"' : ""}>${esc(x.text)}${x.author ? ` <span class="muted small">— ${esc(x.author)}</span>` : ""}</li>`).join("")}</ol>` : `<p class="muted">Пока пусто — что зацепило из постов или нашлось само?</p>`}
-      <div class="row"><input id="fact-text" placeholder="Что ты узнал про страну — в одну-две фразы" style="flex:1"><button class="btn small" id="fact-send">Записать</button></div>
+      <div class="row"><input id="fact-text" placeholder="Что нового о стране — в одну-две фразы" style="flex:1"><button class="btn small" id="fact-send">Записать</button></div>
       <p class="note" style="margin:8px 0 0">Попадёт в общий список и в журнал сезона, с твоим именем.</p></div>`;
     out += `<div class="card composer"><h2>✉️ Написать Миле</h2><p class="note helptext">${html(h.texts.write_prompt)}</p><textarea id="letter-text" placeholder="Это обычное сообщение, не отчёт"></textarea><button class="btn block" id="letter-send" style="margin-top:10px">Отправить</button></div>`;
     out += `<details class="card"><summary>❔ Если что-то пошло не так</summary><div class="content helptext">${html(unhead(h.texts.help))}</div></details>`;
     out += `<details class="card"><summary>О клубе</summary><div class="content helptext">${html(h.texts.greeting)}</div></details>`;
-    if (h.today.calendar_url) out += `<a class="card tight linkcard" href="${esc(h.today.calendar_url)}"><div class="row between"><div><b>☀️ Календарь цолькин</b><div class="muted small">Какой сегодня день у майя и что он советует. Можно посчитать свой день рождения.</div></div><span class="muted">›</span></div></a>`;
+    if (h.today.calendar_url) out += `<a class="card tight linkcard" href="${esc(h.today.calendar_url)}"><div class="row between"><div style="flex:1;min-width:0"><b>☀️ Календарь цолькин</b><div class="muted small">Какой сегодня день у майя и что он советует. Можно посчитать свой день рождения.</div></div><span class="muted chevron">›</span></div></a>`;
     const links = [];
     if (h.links.channel_url) links.push(`<a class="btn soft" href="${esc(h.links.channel_url)}">📣 Канал клуба</a>`);
     if (h.links.admin_app) links.push(`<a class="btn" href="/app/admin${location.hash}">🛠 Админка</a>`);
