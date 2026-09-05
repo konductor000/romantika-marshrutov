@@ -46,6 +46,7 @@ __all__ = [
     "IntentChoice",
     "Job",
     "JobStatus",
+    "Letter",
     "Media",
     "ReminderLog",
     "Report",
@@ -255,6 +256,15 @@ class Report(Base, TimestampMixin):
         ),
         enum_check("kind", ReportKind, "kind"),
         enum_check("level", StampLevel, "level"),
+        # A Mini App submission carries a client-made id; a retry after a lost response finds
+        # the row it already made instead of stamping a second report (ARCHITECTURE §8.1).
+        Index(
+            "uq_reports_user_id_client_id",
+            "user_id",
+            "client_id",
+            unique=True,
+            postgresql_where=text("client_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -266,6 +276,10 @@ class Report(Base, TimestampMixin):
     level: Mapped[str] = mapped_column(String(8), nullable=False)
     tg_chat_id: Mapped[int | None] = mapped_column(BigInteger)
     tg_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    client_id: Mapped[str | None] = mapped_column(String(64))
+    """Idempotency key of a Mini App submission; None for messages that came through the bot."""
+    edited_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    """Last edit in the Mini App (text or files); the previous text is in `audit_log`."""
     deleted_at: Mapped[datetime | None] = mapped_column(Timestamp)
 
 
@@ -407,8 +421,34 @@ class Wish(Base, TimestampMixin):
     )
 
 
+class Letter(Base, TimestampMixin):
+    """A message to Mila that is not a report (DOMAIN §2): «Написать Миле» in the bot or the app,
+    a message sent outside a week, or a report the author took back with «это не отчёт».
+
+    Mila's inbox in the admin app lists these; her answer (a reply in the chat or the reply box
+    in the app) is written back here, so the inbox shows what is still unanswered.
+    """
+
+    __tablename__ = "letters"
+    __table_args__ = (
+        CheckConstraint("source IN ('bot', 'app', 'out_of_week', 'not_report')", name="source"),
+        Index("ix_letters_season_id_created_at", "season_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    season_id: Mapped[int | None] = mapped_column(ForeignKey("seasons.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    report_id: Mapped[int | None] = mapped_column(ForeignKey("reports.id"))
+    """The report the letter came from (out of a week, or taken back); its files stay there."""
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    reply_text: Mapped[str | None] = mapped_column(Text)
+    replied_at: Mapped[datetime | None] = mapped_column(Timestamp)
+    replied_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
 class AdminLink(Base, TimestampMixin):
-    """Routing of Mila's replies back to the author of a report."""
+    """Routing of Mila's replies back to the author of a report or a letter."""
 
     __tablename__ = "admin_links"
     __table_args__ = (PrimaryKeyConstraint("admin_chat_id", "admin_message_id", name="pk_admin_links"),)
@@ -418,6 +458,7 @@ class AdminLink(Base, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     report_id: Mapped[int | None] = mapped_column(ForeignKey("reports.id"))
     week_id: Mapped[int | None] = mapped_column(ForeignKey("weeks.id"))
+    letter_id: Mapped[int | None] = mapped_column(ForeignKey("letters.id"))
 
 
 class DialogState(Base, TimestampMixin):

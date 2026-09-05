@@ -13,7 +13,7 @@ from romantika.db.session import make_session_factory
 from romantika.logging import setup_logging
 from romantika.services.media import MediaStore
 from romantika.worker.runner import run_once
-from romantika.worker.schedulers import backup_status_tick, reminders_tick
+from romantika.worker.schedulers import backup_status_tick, reminders_tick, season_end_tick
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,11 @@ async def run() -> None:
                         await reminders_tick(session, telegram=telegram, now=now, admin_chat=admin_chat)
                 except Exception:
                     logger.exception("reminders_tick_crashed")
+                try:
+                    async with session_factory() as session, session.begin():
+                        await season_end_tick(session, now=now, admin_chat=admin_chat)
+                except Exception:
+                    logger.exception("season_end_tick_crashed")
             if monotonic - last_backup_check >= BACKUP_CHECK_INTERVAL:
                 last_backup_check = monotonic
                 try:

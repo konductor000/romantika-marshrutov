@@ -16,7 +16,7 @@ from romantika.bot.send import safe_send
 from romantika.config import Settings
 from romantika.db import models
 from romantika.domain.types import StampLevel
-from romantika.services import achievements, content, facts, links, people, reports
+from romantika.services import achievements, content, facts, letters, links, people, reports
 from romantika.services.content import SeasonDTO
 from romantika.services.gateways import TelegramGateway
 from romantika.services.media import MediaStore
@@ -157,6 +157,15 @@ async def _dispatch(
             return
         await safe_send(bot, chat_id, ru.NOT_REPORT_DONE, reply_markup=keyboards.main_keyboard(is_admin=is_admin))
         row = await session.get(models.Report, report_id)
+        letter = await letters.create(
+            session,
+            season_id=season.id,
+            user_id=user.id,
+            source=letters.Source.NOT_REPORT,
+            text=row.text if row else None,
+            report_id=report_id,
+            now=now,
+        )
         if admin_chat is not None and user.id != admin_chat:
             head_message = await safe_send(
                 bot,
@@ -171,6 +180,7 @@ async def _dispatch(
                     user_id=user.id,
                     report_id=report_id,
                     week_id=None,
+                    letter_id=letter.id,
                     now=now,
                 )
         return

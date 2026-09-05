@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.db import models
@@ -44,6 +44,8 @@ class IncomingMessage:
     tg_chat_id: int | None = None
     tg_message_id: int | None = None
     files: list[IncomingFile] = field(default_factory=list)
+    client_id: str | None = None
+    """Idempotency key of a Mini App submission (see `find_by_client_id`); None from the bot."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +116,7 @@ async def accept(
         level=level.value,
         tg_chat_id=message.tg_chat_id,
         tg_message_id=message.tg_message_id,
+        client_id=message.client_id,
         created_at=now,
     )
     session.add(report)
@@ -240,30 +243,208 @@ async def cancel(session: AsyncSession, *, user_id: int, report_id: int, now: da
     await session.flush()
     if report.week_id is None:
         return CancelResult(ok=True, stamp_level=None)
+    recomputed = await _recompute_stamp(
+        session, season_id=report.season_id, user_id=user_id, week_id=report.week_id, now=now
+    )
+    return CancelResult(ok=True, stamp_level=recomputed.level)
 
-    query = select(models.Stamp).where(models.Stamp.user_id == user_id, models.Stamp.week_id == report.week_id)
+
+@dataclass(frozen=True, slots=True)
+class Recomputed:
+    """The week's stamp after the live reports were re-read: its level and whether a first
+    maximum appeared (which earns the automatic freeze, DOMAIN §3)."""
+
+    level: StampLevel | None
+    upgraded_to_max: bool
+
+
+async def _recompute_stamp(
+    session: AsyncSession, *, season_id: int, user_id: int, week_id: int, now: datetime
+) -> Recomputed:
+    """Set the stamp of a week to the best level among its live reports.
+
+    A stamp Mila set by hand (`source = admin`) is left alone. Without live reports the
+    automatic stamp is removed; a report edited up to a photo raises it to the maximum.
+    """
+    query = select(models.Stamp).where(models.Stamp.user_id == user_id, models.Stamp.week_id == week_id)
     stamp = (await session.execute(query)).scalar_one_or_none()
-    if stamp is None:
-        return CancelResult(ok=True, stamp_level=None)
-    if stamp.source == models.StampSource.ADMIN.value:
-        return CancelResult(ok=True, stamp_level=StampLevel(stamp.level))
+    if stamp is not None and stamp.source == models.StampSource.ADMIN.value:
+        return Recomputed(level=StampLevel(stamp.level), upgraded_to_max=False)
 
-    levels = await _remaining_levels(session, user_id=user_id, week_id=report.week_id)
+    levels = await _remaining_levels(session, user_id=user_id, week_id=week_id)
     if not levels:
-        await session.delete(stamp)
-        await session.flush()
-        return CancelResult(ok=True, stamp_level=None)
+        if stamp is not None:
+            await session.delete(stamp)
+            await session.flush()
+        return Recomputed(level=None, upgraded_to_max=False)
 
     level = StampLevel.MAX if StampLevel.MAX in levels else StampLevel.MIN
-    stamp.level = level.value
+    if stamp is None:
+        week = await session.get(models.Week, week_id)
+        merged = await stamps.merge(
+            session,
+            season_id=season_id,
+            user_id=user_id,
+            week_id=week_id,
+            week_title=week.title if week else "",
+            level=level,
+            now=now,
+        )
+        return Recomputed(level=merged.level, upgraded_to_max=merged.upgraded_to_max)
+    previous = StampLevel(stamp.level)
+    if previous is not level:
+        stamp.level = level.value
+        stamp.awarded_at = now
+        await session.flush()
+    return Recomputed(level=level, upgraded_to_max=level is StampLevel.MAX and previous is not StampLevel.MAX)
+
+
+# --- editing (Mini App) ------------------------------------------------------------------
+
+NOT_YOURS = "not_yours"
+CANCELLED = "cancelled"
+WEEK_OVER = "week_over"
+EMPTY = "empty"
+
+
+@dataclass(frozen=True, slots=True)
+class EditResult:
+    """What an edit did: the report's new level, the week's stamp after it, new media rows
+    to fill with bytes, and whether the edit earned the first-maximum freeze."""
+
+    ok: bool
+    reason: str | None = None
+    report_id: int | None = None
+    week_number: int | None = None
+    level: StampLevel | None = None
+    stamp_level: StampLevel | None = None
+    freeze_granted: bool = False
+    media_ids: list[uuid.UUID] = field(default_factory=list)
+    text_changed: bool = False
+    removed: int = 0
+
+
+def editable_until(week_ends_on: date | None, today: date) -> bool:
+    """A report may be edited while its week is open (DOMAIN §2); letters and past weeks are read-only."""
+    return week_ends_on is not None and today <= week_ends_on
+
+
+async def edit(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    report_id: int,
+    text: str | None,
+    new_files: list[IncomingFile],
+    remove_media_ids: list[uuid.UUID],
+    now: datetime,
+) -> EditResult:
+    """Change the text and the files of one's own report while its week is open.
+
+    Removed files are hidden, never deleted (DOMAIN §2); the previous text is kept in the
+    audit log. The report's level follows what is left (a photo is a maximum, text alone a
+    minimum) and the week's stamp is recomputed from all live reports — the same recomputation
+    «это не отчёт» does, so editing a photo away lowers a stamp only if nothing else holds it.
+    """
+    report = await session.get(models.Report, report_id)
+    if report is None or report.user_id != user_id:
+        return EditResult(ok=False, reason=NOT_YOURS)
+    if report.deleted_at is not None:
+        return EditResult(ok=False, reason=CANCELLED)
+    week = await session.get(models.Week, report.week_id) if report.week_id is not None else None
+    if week is None or not editable_until(week.ends_on, to_moscow(now).date()):
+        return EditResult(ok=False, reason=WEEK_OVER)
+
+    season = await content.require_season(session, report.season_id)
+    body = (text or "").strip() or None
+    text_changed = body != (report.text or None)
+    if text_changed:
+        content.audit(
+            session,
+            actor_id=user_id,
+            action="edit",
+            entity="report",
+            entity_id=str(report.id),
+            before={"text": report.text},
+            after={"text": body},
+        )
+        report.text = body
+
+    media_query = select(models.Media).where(models.Media.report_id == report.id, models.Media.hidden_at.is_(None))
+    live_media = list((await session.execute(media_query)).scalars())
+    removed = 0
+    for row in live_media:
+        if row.id in set(remove_media_ids):
+            row.hidden_at = now
+            removed += 1
+    kept = [row for row in live_media if row.hidden_at is None]
+
+    new_rows: list[models.Media] = []
+    for item in new_files:
+        row = models.Media(
+            report_id=report.id,
+            tg_file_id=item.file_id,
+            tg_file_unique_id=item.file_unique_id,
+            mime=item.mime,
+            size=item.size,
+            width=item.width,
+            height=item.height,
+            path=media.new_relative_path(
+                season_slug=season.slug,
+                user_id=user_id,
+                suffix=media.suffix_for(kind=item.kind, mime=item.mime),
+            ),
+            created_at=now,
+        )
+        session.add(row)
+        new_rows.append(row)
+    if new_rows:
+        await session.flush()
+
+    if not body and not kept and not new_rows:
+        # Nothing would be left: refuse, and let the transaction roll the hidings back.
+        return EditResult(ok=False, reason=EMPTY)
+
+    kinds = [media.kind_for_mime(row.mime) for row in kept] + [item.kind for item in new_files]
+    kind = kinds[0] if kinds else ReportKind.TEXT
+    level = StampLevel.MAX if any(rules.report_level(k) is StampLevel.MAX for k in kinds) else StampLevel.MIN
+    report.kind = kind.value
+    report.level = level.value
+    report.edited_at = now
     await session.flush()
-    return CancelResult(ok=True, stamp_level=level)
+
+    recomputed = await _recompute_stamp(session, season_id=report.season_id, user_id=user_id, week_id=week.id, now=now)
+    freeze_granted = False
+    if recomputed.upgraded_to_max:
+        freeze_granted = await freezes.grant(
+            session,
+            season_id=report.season_id,
+            user_id=user_id,
+            reason=models.FreezeReason.MAX,
+            granted_by=None,
+            now=now,
+        )
+    return EditResult(
+        ok=True,
+        report_id=report.id,
+        week_number=week.number,
+        level=level,
+        stamp_level=recomputed.level,
+        freeze_granted=freeze_granted,
+        media_ids=[row.id for row in new_rows],
+        text_changed=text_changed,
+        removed=removed,
+    )
+
+
+async def find_by_client_id(session: AsyncSession, *, user_id: int, client_id: str) -> models.Report | None:
+    """The report a Mini App submission already created, when the client retries it."""
+    query = select(models.Report).where(models.Report.user_id == user_id, models.Report.client_id == client_id)
+    return (await session.execute(query)).scalar_one_or_none()
 
 
 async def count_for_week(session: AsyncSession, *, user_id: int, week_id: int) -> int:
     """Live (not cancelled) reports of one participant for one week."""
-    from sqlalchemy import func
-
     query = select(func.count(models.Report.id)).where(
         models.Report.user_id == user_id,
         models.Report.week_id == week_id,

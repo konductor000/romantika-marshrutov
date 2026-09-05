@@ -22,16 +22,6 @@ from romantika.services.words import UserWord, WeekWord
 
 
 @dataclass(frozen=True, slots=True)
-class JournalWeek:
-    """A week the participant has a stamp for, with a line they wrote about it."""
-
-    number: int
-    title: str
-    level: StampLevel
-    quote: str
-
-
-@dataclass(frozen=True, slots=True)
 class JournalMedia:
     """A file of a report. `path` only points at a real file once `downloaded` is true."""
 
@@ -40,6 +30,26 @@ class JournalMedia:
     downloaded: bool
     tg_file_id: str | None
     """None until a Mini App upload has been sent to Telegram once; the bot then sends from disk."""
+    week_id: int | None = None
+    mime: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class JournalWeek:
+    """A week the participant has a stamp for, with what they wrote and shot that week.
+
+    `quote` is the last line they wrote (the bot's short preview); `texts` are all of them in
+    order and `media` the files, for the PDF where the week gets its own page section.
+    """
+
+    number: int
+    title: str
+    level: StampLevel
+    quote: str
+    starts_on: date | None = None
+    ends_on: date | None = None
+    texts: list[str] = field(default_factory=list)
+    media: list[JournalMedia] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,14 +76,19 @@ async def build(session: AsyncSession, *, season_id: int, user_id: int, today: d
     season = await content.require_season(session, season_id)
     weeks = {week.number: week for week in await content.weeks(session, season_id)}
     levels = await stamps.for_user(session, season_id=season_id, user_id=user_id)
-    quotes = await _quotes(session, season_id=season_id, user_id=user_id)
+    texts = await _texts(session, season_id=season_id, user_id=user_id)
+    media = await _media(session, season_id=season_id, user_id=user_id)
 
     journal_weeks = [
         JournalWeek(
             number=number,
             title=weeks[number].title,
             level=level,
-            quote=quotes.get(weeks[number].id, ""),
+            quote=texts.get(weeks[number].id, [""])[-1],
+            starts_on=weeks[number].starts_on,
+            ends_on=weeks[number].ends_on,
+            texts=texts.get(weeks[number].id, []),
+            media=[item for item in media if item.week_id == weeks[number].id],
         )
         for number, level in sorted(levels.items())
         if number in weeks and weeks[number].starts_on <= today
@@ -82,7 +97,7 @@ async def build(session: AsyncSession, *, season_id: int, user_id: int, today: d
         user=await people.get_user(session, user_id),
         season=season,
         weeks=journal_weeks,
-        media=await _media(session, season_id=season_id, user_id=user_id),
+        media=media,
         achievements=await achievements.labels(session, season_id=season_id, user_id=user_id),
         words=await words.for_user(session, season_id=season_id, user_id=user_id),
         facts=await facts.list_active(session, season_id),
@@ -97,8 +112,8 @@ async def wish_for(session: AsyncSession, *, season_id: int, user_id: int) -> st
     return await wishes.get_wish(session, season_id, user_id)
 
 
-async def _quotes(session: AsyncSession, *, season_id: int, user_id: int) -> dict[int, str]:
-    """`{week_id: text}` — the last thing the participant wrote in that week."""
+async def _texts(session: AsyncSession, *, season_id: int, user_id: int) -> dict[int, list[str]]:
+    """`{week_id: [text, ...]}` — everything the participant wrote in that week, oldest first."""
     query = (
         select(models.Report.week_id, models.Report.text)
         .where(
@@ -111,12 +126,11 @@ async def _quotes(session: AsyncSession, *, season_id: int, user_id: int) -> dic
         )
         .order_by(models.Report.created_at, models.Report.id)
     )
-    # A later report of the same week overwrites the earlier one: the quote is the last line.
-    quotes: dict[int, str] = {}
+    texts: dict[int, list[str]] = {}
     for week_id, text in (await session.execute(query)).tuples().all():
         if week_id is not None and text:
-            quotes[week_id] = text
-    return quotes
+            texts.setdefault(week_id, []).append(text)
+    return texts
 
 
 async def _media(session: AsyncSession, *, season_id: int, user_id: int) -> list[JournalMedia]:
@@ -128,7 +142,14 @@ async def _media(session: AsyncSession, *, season_id: int, user_id: int) -> list
     so the PDF must skip a path that is still only a promise.
     """
     query = (
-        select(models.Media.id, models.Media.path, models.Media.downloaded_at, models.Media.tg_file_id)
+        select(
+            models.Media.id,
+            models.Media.path,
+            models.Media.downloaded_at,
+            models.Media.tg_file_id,
+            models.Report.week_id,
+            models.Media.mime,
+        )
         .join(models.Report, models.Report.id == models.Media.report_id)
         .where(
             models.Report.season_id == season_id,
@@ -140,8 +161,15 @@ async def _media(session: AsyncSession, *, season_id: int, user_id: int) -> list
         .order_by(models.Media.created_at, models.Media.id)
     )
     return [
-        JournalMedia(media_id=media_id, path=path, downloaded=downloaded_at is not None, tg_file_id=tg_file_id)
-        for media_id, path, downloaded_at, tg_file_id in (await session.execute(query)).all()
+        JournalMedia(
+            media_id=media_id,
+            path=path,
+            downloaded=downloaded_at is not None,
+            tg_file_id=tg_file_id,
+            week_id=week_id,
+            mime=mime,
+        )
+        for media_id, path, downloaded_at, tg_file_id, week_id, mime in (await session.execute(query)).all()
     ]
 
 
@@ -161,6 +189,7 @@ class ReportDTO:
     text: str | None
     created_at: datetime
     media: list[ReportMediaDTO]
+    edited_at: datetime | None = None
 
 
 async def reports_for_user(session: AsyncSession, *, season_id: int, user_id: int) -> list[ReportDTO]:
@@ -197,6 +226,7 @@ async def reports_for_user(session: AsyncSession, *, season_id: int, user_id: in
             text=row.text,
             created_at=row.created_at,
             media=by_report.get(row.id, []),
+            edited_at=row.edited_at,
         )
         for row in rows
     ]

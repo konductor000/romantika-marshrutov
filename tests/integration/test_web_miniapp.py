@@ -168,6 +168,7 @@ async def test_text_report_stamps_minimum_and_queues_both_messages(app: App) -> 
         "user_id": ALICE,
         "report_id": body["report_id"],
         "week_id": (await content.week_by_number(app.session, app.season_id, 1)).id,
+        "letter_id": None,
     }  # type: ignore[union-attr]
     assert admin_job.payload["media_ids"] == []
     assert receipt.payload["text"] == body["message"] and "link" not in receipt.payload
@@ -296,7 +297,7 @@ async def test_admin_reminders_remind_and_message(app: App) -> None:
     r = await app.client.post("/api/admin/remind", headers=admin)
     assert r.status_code == 202
     (job,) = await app.jobs("reminders_now")
-    assert job.payload == {"season_id": app.season_id, "requested_by": ADMIN_ID}
+    assert job.payload == {"season_id": app.season_id, "requested_by": ADMIN_ID, "week_number": None}
     r = await app.client.post(f"/api/admin/participants/{ALICE}/message", json={"text": "Молодец!"}, headers=admin)
     assert r.status_code == 202
     (note,) = await app.jobs("telegram_notify")

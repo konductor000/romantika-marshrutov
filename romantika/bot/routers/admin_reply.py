@@ -9,7 +9,7 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.bot.send import safe_send
-from romantika.services import links
+from romantika.services import letters, links
 from romantika.texts import ru
 
 
@@ -29,6 +29,10 @@ async def relay_reply(
     if link is None:
         raise SkipHandler
     delivered = await safe_send(bot, link.user_id, ru.reply_to_author(message.text))
+    if delivered is not None and link.letter_id is not None:
+        await letters.mark_replied(
+            session, link.letter_id, reply_text=message.text, replied_by=message.chat.id, now=now
+        )
     await safe_send(bot, message.chat.id, ru.REPLY_DELIVERED if delivered else ru.REPLY_FAILED)
 
 

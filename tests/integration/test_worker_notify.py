@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from romantika.db import models
-from romantika.domain.types import ReportKind
+from romantika.domain.types import ReportKind, StampLevel
 from romantika.services import content, notify, people, reports, seed
 from romantika.services.gateways import SentMedia, TelegramFile
 from romantika.services.media import MediaStore
@@ -152,3 +152,39 @@ async def test_reminders_now_reports_back_to_mila(db_session: AsyncSession, tmp_
     assert await run_once(factory, telegram=gateway, media_store=MediaStore(tmp_path), now=now) == "reminders_now"
     assert gateway.texts[0][0] == ALICE and "выходные" in gateway.texts[0][1]
     assert gateway.texts[1] == (ADMIN_ID, "Напоминание ушло: 1 из 1")
+
+
+async def test_season_end_queues_one_journal_per_stamped_participant(db_session: AsyncSession, tmp_path: Path) -> None:
+    from romantika.services import stamps
+    from romantika.worker.schedulers import season_end_tick
+
+    season_id = await _season(db_session)
+    week = await content.week_by_number(db_session, season_id, 1)
+    assert week is not None
+    await stamps.merge(
+        db_session,
+        season_id=season_id,
+        user_id=ALICE,
+        week_id=week.id,
+        week_title=week.title,
+        level=StampLevel.MIN,
+        now=moscow(2026, 9, 2),
+    )
+    # the last day of the season (Wednesday 18.11) and the morning after: nothing yet
+    assert await season_end_tick(db_session, now=moscow(2026, 11, 18, 23), admin_chat=ADMIN_ID) is False
+    assert await season_end_tick(db_session, now=moscow(2026, 11, 19, 9), admin_chat=ADMIN_ID) is False
+    # noon the day after: once
+    assert await season_end_tick(db_session, now=moscow(2026, 11, 19, 12), admin_chat=ADMIN_ID) is True
+    assert await season_end_tick(db_session, now=moscow(2026, 11, 19, 13), admin_chat=ADMIN_ID) is False
+    assert await season_end_tick(db_session, now=moscow(2026, 11, 20, 12), admin_chat=ADMIN_ID) is False
+
+    factory = async_sessionmaker(bind=db_session.bind, expire_on_commit=False, join_transaction_mode="create_savepoint")
+    gateway = FakeGateway()
+    now = moscow(2026, 11, 19, 12)
+    assert await run_once(factory, telegram=gateway, media_store=MediaStore(tmp_path), now=now) == "season_journals"
+    assert len(gateway.texts) == 1 and gateway.texts[0][0] == ADMIN_ID
+    assert "закончился — собираю журналы: 1 человек" in gateway.texts[0][1]
+    queued = list((await db_session.execute(select(models.Job).where(models.Job.kind == "journal_pdf"))).scalars())
+    assert [(j.payload["user_id"], j.payload["chat_id"], j.payload["requested_via"]) for j in queued] == [
+        (ALICE, ALICE, "season_end")
+    ], "Mila has no stamp, so she gets no journal; Alice gets hers"

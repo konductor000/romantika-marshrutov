@@ -11,7 +11,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.domain.calendar import to_moscow
-from romantika.services import content, reminders
+from romantika.services import content, jobs, reminders
 from romantika.texts import ru
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,8 @@ SLOTS: list[tuple[int, int, str, Callable[[str], str]]] = [
     (6, 12, "sun", ru.reminder_sunday),
 ]
 BACKUP_STALE_AFTER = timedelta(days=8)
+#: The journals go out the day after the season ends, at noon Moscow time (DOMAIN §7).
+JOURNALS_HOUR = 12
 
 
 async def reminders_tick(
@@ -114,3 +116,25 @@ async def backup_status_tick(
     else:
         logger.error("backup_alert_no_admin", extra={"alert": alert})
     return alert
+
+
+async def season_end_tick(session: AsyncSession, *, now: datetime, admin_chat: int | None = None) -> bool:
+    """Once, the day after the last day of the season: queue the journals for everyone.
+
+    Deduplicated through `reminder_log` like the reminders (`<season slug>:journals`), so a
+    restart never sends them twice. Returns True when the job was queued on this tick.
+    """
+    local = to_moscow(now)
+    # A finished season stays active until Mila archives it (`content.active_season`), so the
+    # day after its last day it is still the one this finds.
+    season = await content.active_season(session, today=local.date())
+    if season is None:
+        return False
+    if local.date() < season.ends_on + timedelta(days=1) or local.hour < JOURNALS_HOUR:
+        return False
+    key = f"{season.slug}:journals"
+    if not await reminders.mark_sent(session, key, now=now):
+        return False
+    await jobs.enqueue(session, "season_journals", {"season_id": season.id, "admin_chat": admin_chat}, now=now)
+    logger.info("season_journals_queued", extra={"season": season.slug})
+    return True

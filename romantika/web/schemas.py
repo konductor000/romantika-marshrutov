@@ -70,6 +70,9 @@ class ReportOut(BaseModel):
     text: str | None
     created_at: datetime
     media: list[MediaOut]
+    edited_at: datetime | None = None
+    editable: bool = False
+    """True while the report's week is open: text and files may still be changed (DOMAIN §2)."""
 
 
 class WordOut(BaseModel):
@@ -134,6 +137,10 @@ class ParticipantOut(BaseModel):
     freezes_total: int
     best_streak: int
     current_streak: int
+    week_intent: Literal["take", "try", "skip"] | None = None
+    """«Берусь / Попробую / Мимо» on the week running now; the people filters read it."""
+    week_level: Literal["min", "max"] | None = None
+    """The stamp on the week running now, if any."""
 
 
 class ParticipantDetail(BaseModel):
@@ -336,6 +343,13 @@ class CancelOut(BaseModel):
     message: str
 
 
+class ReportEditOut(BaseModel):
+    report: ReportOut
+    stamp_level: str | None
+    freeze_granted: bool
+    message: str
+
+
 class TextIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
@@ -383,6 +397,28 @@ class FactsOut(BaseModel):
 
 class RemindersOut(BaseModel):
     enabled: bool
+
+
+class RemindIn(BaseModel):
+    week_number: int | None = None
+    """The week Mila is looking at; None means the week running now."""
+
+
+class LetterOut(BaseModel):
+    id: int
+    user_id: int
+    author: str
+    source: Literal["bot", "app", "out_of_week", "not_report"]
+    text: str
+    created_at: datetime
+    reply_text: str | None
+    replied_at: datetime | None
+    report_id: int | None
+
+
+class LettersOut(BaseModel):
+    unanswered: int
+    letters: list[LetterOut]
 
 
 class RemindersIn(BaseModel):

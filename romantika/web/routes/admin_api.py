@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
@@ -14,6 +16,7 @@ from romantika.services import (
     facts,
     freezes,
     journal,
+    letters,
     notify,
     passport,
     people,
@@ -22,6 +25,7 @@ from romantika.services import (
     summary,
     wishes,
 )
+from romantika.services.content import WeekDTO
 from romantika.texts import ru
 from romantika.web import schemas, views
 from romantika.web.deps import AdminDep, NowDep, SeasonDep, SessionDep, TodayDep
@@ -36,16 +40,18 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 async def list_weeks(
     _: AdminDep, session: SessionDep, season: SeasonDep, today: TodayDep
 ) -> list[schemas.AdminWeekOut]:
-    result = []
-    for week in await content.weeks(session, season.id):
-        if week.starts_on > today:
-            state = WeekState.LOCKED
-        elif week.ends_on >= today:
-            state = WeekState.CURRENT
-        else:
-            state = WeekState.STAMPED
-        result.append(schemas.AdminWeekOut(**views.week_out(week, state, None, reveal=True).model_dump()))
-    return result
+    return [_admin_week(week, today) for week in await content.weeks(session, season.id)]
+
+
+def _admin_week(week: WeekDTO, today: date) -> schemas.AdminWeekOut:
+    """Mila's calendar view of a week: locked (future), current, or over (`stamped` here means past)."""
+    if week.starts_on > today:
+        state = WeekState.LOCKED
+    elif week.ends_on >= today:
+        state = WeekState.CURRENT
+    else:
+        state = WeekState.STAMPED
+    return schemas.AdminWeekOut(**views.week_out(week, state, None, reveal=True).model_dump())
 
 
 @router.put("/weeks/{week_id}", response_model=schemas.AdminWeekOut)
@@ -54,14 +60,14 @@ async def edit_week(
 ) -> schemas.AdminWeekOut:
     changes = {key: value for key, value in body.model_dump().items() if value is not None}
     if not changes:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "nothing to change")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "nothing to change")
     try:
         week = await content.update_week(session, actor_id=admin.user.id, week_id=week_id, changes=changes, today=today)
     except content.ContentError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    return schemas.AdminWeekOut(**views.week_out(week, WeekState.CURRENT, None, reveal=True).model_dump())
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    return _admin_week(week, today)
 
 
 @router.get("/achievement-types", response_model=list[schemas.AchievementTypeOut])
@@ -82,12 +88,16 @@ async def participants(
     breakdowns = await summary.breakdowns_for_season(session, season=season, today=today)
     all_stamps = await stamps.for_season(session, season.id)
     users = {u.id: u for u in await people.all_users(session)}
+    current = await content.current_week(session, season.id, today=today)
+    intents = await people.intents(session, season_id=season.id, week_id=current.id) if current else {}
     result = []
     for user_id, breakdown in breakdowns.items():
         user = users.get(user_id)
         if user is None:
             continue
         levels = all_stamps.get(user_id, {})
+        week_level = levels.get(current.number) if current else None
+        intent = intents.get(user_id)
         result.append(
             schemas.ParticipantOut(
                 id=user.id,
@@ -102,6 +112,8 @@ async def participants(
                 freezes_total=breakdown.freezes_total,
                 best_streak=breakdown.best_streak,
                 current_streak=breakdown.current_streak,
+                week_intent=intent.value if intent else None,
+                week_level=week_level.value if week_level else None,
             )
         )
     result.sort(key=lambda p: (p.joined_at, p.id))
@@ -145,21 +157,7 @@ async def participant(
         achievements=view.achievements,
         wish=jview.wish,
         reports=[
-            schemas.ReportOut(
-                id=r.id,
-                week_number=r.week_number,
-                kind=r.kind,
-                level=r.level,
-                text=r.text,
-                created_at=r.created_at,
-                media=[
-                    schemas.MediaOut(
-                        id=str(m.media_id), url=f"/media/{m.media_id}", mime=m.mime, downloaded=m.downloaded
-                    )
-                    for m in r.media
-                ],
-            )
-            for r in reports
+            views.reports_out(r, week_ends={w.number: w.ends_on for w in view.weeks}, today=today) for r in reports
         ],
         words=[schemas.WordOut(word=w.word, meaning=w.meaning) for w in jview.words],
     )
@@ -343,9 +341,64 @@ async def reminders_toggle(body: schemas.RemindersIn, _: AdminDep, session: Sess
 
 
 @router.post("/remind", response_model=schemas.QueuedOut, status_code=status.HTTP_202_ACCEPTED)
-async def remind_now(admin: AdminDep, session: SessionDep, season: SeasonDep, now: NowDep) -> schemas.QueuedOut:
-    """«Напомнить сейчас»: the worker sends the texts and tells Mila how many went out."""
-    job_id = await notify.enqueue_reminders_now(session, season_id=season.id, requested_by=admin.user.id, now=now)
+async def remind_now(
+    admin: AdminDep, session: SessionDep, season: SeasonDep, now: NowDep, body: schemas.RemindIn | None = None
+) -> schemas.QueuedOut:
+    """«Напомнить сейчас»: the worker sends the texts and tells Mila how many went out.
+
+    The week comes from the screen Mila pressed the button on; a past week is refused, because
+    a reminder about it would ask for a report nobody can hand in any more (DOMAIN §2).
+    """
+    week_number = body.week_number if body else None
+    if week_number is not None:
+        week = await content.week_by_number(session, season.id, week_number)
+        if week is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such week")
+        if week.ends_on < views.moscow_today(now):
+            raise HTTPException(status.HTTP_409_CONFLICT, "неделя уже прошла — напоминать не о чем")
+    job_id = await notify.enqueue_reminders_now(
+        session, season_id=season.id, requested_by=admin.user.id, now=now, week_number=week_number
+    )
+    return schemas.QueuedOut(job_id=job_id)
+
+
+# --- letters: Mila's inbox ---------------------------------------------------------
+
+
+@router.get("/letters", response_model=schemas.LettersOut)
+async def list_letters(_: AdminDep, session: SessionDep, season: SeasonDep) -> schemas.LettersOut:
+    listed = await letters.list_for_season(session, season.id)
+    names = await people.display_names(session, [item.user_id for item in listed])
+    return schemas.LettersOut(
+        unanswered=await letters.unanswered_count(session, season.id),
+        letters=[
+            schemas.LetterOut(
+                id=item.id,
+                user_id=item.user_id,
+                author=names.get(item.user_id, str(item.user_id)),
+                source=item.source.value,
+                text=item.text,
+                created_at=item.created_at,
+                reply_text=item.reply_text,
+                replied_at=item.replied_at,
+                report_id=item.report_id,
+            )
+            for item in listed
+        ],
+    )
+
+
+@router.post("/letters/{letter_id}/reply", response_model=schemas.QueuedOut, status_code=status.HTTP_202_ACCEPTED)
+async def reply_to_letter(
+    letter_id: int, body: schemas.TextIn, admin: AdminDep, session: SessionDep, now: NowDep
+) -> schemas.QueuedOut:
+    """Answer a letter from the inbox: delivered by the bot as «Мила ответила…», marked answered."""
+    letter = await letters.get(session, letter_id)
+    if letter is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such letter")
+    text = body.text.strip()
+    await letters.mark_replied(session, letter_id, reply_text=text, replied_by=admin.user.id, now=now)
+    job_id = await notify.enqueue_message(session, chat_id=letter.user_id, text=ru.reply_to_author(text), now=now)
     return schemas.QueuedOut(job_id=job_id)
 
 

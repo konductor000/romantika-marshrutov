@@ -15,7 +15,7 @@ from romantika.bot.keyboards import button_action
 from romantika.bot.routers import admin, common
 from romantika.bot.send import safe_send
 from romantika.config import Settings
-from romantika.services import content, facts, links, people, words
+from romantika.services import content, facts, letters, links, people, words
 from romantika.services.content import SeasonDTO
 from romantika.services.media import MediaStore
 from romantika.services.people import DialogStateDTO, UserDTO
@@ -197,6 +197,14 @@ async def answer_dialog(
 
     if dialog.state == "letter":
         await safe_send(bot, chat_id, ru.LETTER_SENT, reply_markup=keyboard)
+        letter = await letters.create(
+            session,
+            season_id=season.id if season else None,
+            user_id=user.id,
+            source=letters.Source.BOT,
+            text=text,
+            now=now,
+        )
         if admin_chat is not None and user.id != admin_chat:
             head = await safe_send(bot, admin_chat, ru.admin_letter_header(author, text))
             if head is not None:
@@ -207,6 +215,7 @@ async def answer_dialog(
                     user_id=user.id,
                     report_id=None,
                     week_id=None,
+                    letter_id=letter.id,
                     now=now,
                 )
         return

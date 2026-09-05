@@ -30,6 +30,7 @@ async def enqueue_message(
     link_user_id: int | None = None,
     link_report_id: int | None = None,
     link_week_id: int | None = None,
+    link_letter_id: int | None = None,
     now: datetime,
 ) -> int:
     """Queue an HTML text and/or files for `chat_id`.
@@ -44,10 +45,21 @@ async def enqueue_message(
         "media_ids": [str(media_id) for media_id in media_ids],
     }
     if link_user_id is not None:
-        payload["link"] = {"user_id": link_user_id, "report_id": link_report_id, "week_id": link_week_id}
+        payload["link"] = {
+            "user_id": link_user_id,
+            "report_id": link_report_id,
+            "week_id": link_week_id,
+            "letter_id": link_letter_id,
+        }
     return await jobs.enqueue(session, TELEGRAM_NOTIFY, payload, now=now)
 
 
-async def enqueue_reminders_now(session: AsyncSession, *, season_id: int, requested_by: int, now: datetime) -> int:
-    """«Напомнить сейчас» from the admin Mini App; the worker reports back to `requested_by`."""
-    return await jobs.enqueue(session, REMINDERS_NOW, {"season_id": season_id, "requested_by": requested_by}, now=now)
+async def enqueue_reminders_now(
+    session: AsyncSession, *, season_id: int, requested_by: int, now: datetime, week_number: int | None = None
+) -> int:
+    """«Напомнить сейчас» from the admin Mini App; the worker reports back to `requested_by`.
+
+    `week_number` is the week Mila is looking at; None means the week running right now.
+    """
+    payload = {"season_id": season_id, "requested_by": requested_by, "week_number": week_number}
+    return await jobs.enqueue(session, REMINDERS_NOW, payload, now=now)

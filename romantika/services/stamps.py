@@ -204,3 +204,9 @@ async def titles_for_user(session: AsyncSession, *, season_id: int, user_id: int
         .where(models.Stamp.season_id == season_id, models.Stamp.user_id == user_id)
     )
     return {int(number): str(title) for number, title in (await session.execute(query)).all()}
+
+
+async def users_with_stamps(session: AsyncSession, season_id: int) -> set[int]:
+    """Everyone with at least one stamp this season — the journal recipients at its end."""
+    query = select(models.Stamp.user_id).where(models.Stamp.season_id == season_id).distinct()
+    return {int(user_id) for user_id in (await session.execute(query)).scalars()}

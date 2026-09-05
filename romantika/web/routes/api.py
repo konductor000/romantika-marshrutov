@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 
 from romantika.db import models
 from romantika.domain.types import ReportKind, StampLevel
-from romantika.services import content, facts, jobs, notify, people, reports, words
+from romantika.services import content, facts, jobs, letters, notify, people, reports, words
 from romantika.services import media as media_service
 from romantika.services.people import TelegramUser
 from romantika.services.reports import IncomingFile, IncomingMessage
@@ -150,7 +150,9 @@ async def submit_report(
     settings: SettingsDep,
     media_store: MediaStoreDep,
     now: NowDep,
+    response: Response,
     text: Annotated[str, Form()] = "",
+    client_id: Annotated[str, Form(max_length=64)] = "",
     files: Annotated[list[UploadFile], File()] = [],  # noqa: B006 — FastAPI reads the default as «no files»
 ) -> schemas.ReportResult:
     """A report from the Mini App: text and/or files, judged by the bot's rules (DOMAIN §2).
@@ -158,45 +160,48 @@ async def submit_report(
     Files are streamed straight onto the media disk and hashed before the row is marked
     downloaded — the same guarantee as for files fetched from Telegram. Mila gets the usual
     copy with the header she can reply to, the participant the usual receipt in the chat.
+    `client_id` makes a retry harmless: the same id answers with the report already made.
     """
     body = text.strip()
     uploads = [upload for upload in files if upload.filename or upload.size]
     if not body and not uploads:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "пустой отчёт: нужен текст или файл")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "пустой отчёт: нужен текст или файл")
     if len(uploads) > MAX_UPLOAD_FILES:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"не больше {MAX_UPLOAD_FILES} файлов за раз")
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"не больше {MAX_UPLOAD_FILES} файлов за раз")
+    if client_id:
+        existing = await reports.find_by_client_id(session, user_id=principal.user.id, client_id=client_id)
+        if existing is not None:
+            response.status_code = status.HTTP_200_OK
+            return await _already_submitted(session, season, existing)
 
-    incoming_files = [
-        IncomingFile(
-            kind=media_service.kind_for_mime(upload.content_type),
-            file_id=None,
-            mime=upload.content_type or "application/octet-stream",
-            size=upload.size,
-        )
-        for upload in uploads
-    ]
+    incoming_files = [_incoming_file(upload) for upload in uploads]
     kind = incoming_files[0].kind if incoming_files else ReportKind.TEXT
-    incoming = IncomingMessage(kind=kind, text=body or None, files=incoming_files)
+    incoming = IncomingMessage(kind=kind, text=body or None, files=incoming_files, client_id=client_id or None)
     result = await reports.accept(session, season_id=season.id, user_id=principal.user.id, message=incoming, now=now)
-    for media_id, upload in zip(result.media_ids, uploads, strict=True):
-        try:
-            await media_store.receive_upload(session, media_id, _chunks(upload), now=now, max_bytes=MAX_UPLOAD_BYTES)
-        except media_service.UploadTooLargeError as exc:
-            raise HTTPException(
-                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"файл больше {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ"
-            ) from exc
+    await _store_uploads(session, media_store, result.media_ids, uploads, now)
 
     author = principal.user.display_name_with_username
     if result.out_of_week or result.week_number is None:
         message = ru.OUT_OF_WEEK
         header = ru.admin_out_of_week_header(author, incoming.text, kind.value)
         week_id = None
+        letter = await letters.create(
+            session,
+            season_id=season.id,
+            user_id=principal.user.id,
+            source=letters.Source.OUT_OF_WEEK,
+            text=incoming.text,
+            report_id=result.report_id,
+            now=now,
+        )
+        letter_id: int | None = letter.id
     else:
         week = await content.week_by_number(session, season.id, result.week_number)
         assert week is not None
         message = ru.report_reply(week, result.stamp_level or result.level, freeze_granted=result.freeze_granted)
         header = ru.admin_report_header(week.number, author, incoming.text, kind.value)
         week_id = week.id
+        letter_id = None
     await _notify_admin(
         session,
         settings,
@@ -205,6 +210,7 @@ async def submit_report(
         media_ids=result.media_ids,
         report_id=result.report_id,
         week_id=week_id,
+        letter_id=letter_id,
         now=now,
     )
     await notify.enqueue_message(session, chat_id=principal.user.id, text=message, now=now)
@@ -219,11 +225,156 @@ async def submit_report(
     )
 
 
+def _incoming_file(upload: UploadFile) -> IncomingFile:
+    return IncomingFile(
+        kind=media_service.kind_for_mime(upload.content_type),
+        file_id=None,
+        mime=upload.content_type or "application/octet-stream",
+        size=upload.size,
+    )
+
+
+async def _store_uploads(
+    session: SessionDep,
+    media_store: MediaStoreDep,
+    media_ids: Sequence[uuid.UUID],
+    uploads: Sequence[UploadFile],
+    now: NowDep,
+) -> None:
+    for media_id, upload in zip(media_ids, uploads, strict=True):
+        try:
+            await media_store.receive_upload(session, media_id, _chunks(upload), now=now, max_bytes=MAX_UPLOAD_BYTES)
+        except media_service.UploadTooLargeError as exc:
+            raise HTTPException(
+                status.HTTP_413_CONTENT_TOO_LARGE, f"файл больше {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ"
+            ) from exc
+
+
+async def _already_submitted(session: SessionDep, season: SeasonDep, row: models.Report) -> schemas.ReportResult:
+    """The answer to a retried submission: what the first attempt produced, sent nowhere again."""
+    from romantika.services import stamps
+
+    week = await session.get(models.Week, row.week_id) if row.week_id is not None else None
+    if week is None:
+        return schemas.ReportResult(
+            report_id=row.id,
+            week_number=None,
+            out_of_week=True,
+            level=row.level,
+            stamp_level=None,
+            freeze_granted=False,
+            message=ru.OUT_OF_WEEK,
+        )
+    stamp = await stamps.get_level(session, user_id=row.user_id, week_id=week.id)
+    week_dto = await content.week_by_number(session, season.id, week.number)
+    assert week_dto is not None
+    return schemas.ReportResult(
+        report_id=row.id,
+        week_number=week.number,
+        out_of_week=False,
+        level=row.level,
+        stamp_level=stamp.value if stamp else None,
+        freeze_granted=False,
+        message=ru.report_reply(week_dto, stamp or StampLevel(row.level), freeze_granted=False),
+    )
+
+
+@router.patch("/reports/{report_id}", response_model=schemas.ReportEditOut)
+async def edit_report(
+    report_id: int,
+    principal: PrincipalDep,
+    session: SessionDep,
+    season: SeasonDep,
+    settings: SettingsDep,
+    media_store: MediaStoreDep,
+    today: TodayDep,
+    now: NowDep,
+    text: Annotated[str, Form()] = "",
+    remove: Annotated[list[str], Form()] = [],  # noqa: B006 — media ids to hide
+    files: Annotated[list[UploadFile], File()] = [],  # noqa: B006 — files to add
+) -> schemas.ReportEditOut:
+    """Change the text and the files of one's own report while its week is open (DOMAIN §2).
+
+    Removed files are hidden, not deleted; the week's stamp is recomputed like after «это не
+    отчёт». Mila gets a copy of the change (with the new files), the participant a receipt.
+    """
+    uploads = [upload for upload in files if upload.filename or upload.size]
+    try:
+        remove_ids = [uuid.UUID(raw) for raw in remove if raw]
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "неверный id файла") from exc
+    row = await session.get(models.Report, report_id)
+    live = 0
+    if row is not None:
+        live = len(
+            [m for m in await _report_media(session, report_id) if m.hidden_at is None and m.id not in remove_ids]
+        )
+    if live + len(uploads) > MAX_UPLOAD_FILES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"не больше {MAX_UPLOAD_FILES} файлов в отчёте")
+
+    result = await reports.edit(
+        session,
+        user_id=principal.user.id,
+        report_id=report_id,
+        text=text,
+        new_files=[_incoming_file(upload) for upload in uploads],
+        remove_media_ids=remove_ids,
+        now=now,
+    )
+    if not result.ok:
+        if result.reason == reports.NOT_YOURS:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, ru.NOT_REPORT_FOREIGN)
+        if result.reason == reports.CANCELLED:
+            raise HTTPException(status.HTTP_409_CONFLICT, ru.NOT_REPORT_ALREADY)
+        if result.reason == reports.EMPTY:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "пустой отчёт: нужен текст или файл")
+        raise HTTPException(status.HTTP_409_CONFLICT, ru.EDIT_WEEK_OVER)
+    await _store_uploads(session, media_store, result.media_ids, uploads, now)
+
+    assert result.week_number is not None
+    week = await content.week_by_number(session, season.id, result.week_number)
+    assert week is not None
+    message = ru.edit_reply(week, result.stamp_level, freeze_granted=result.freeze_granted)
+    await _notify_admin(
+        session,
+        settings,
+        principal,
+        ru.admin_edit_header(
+            week.number,
+            principal.user.display_name_with_username,
+            (text or "").strip() or None,
+            added=len(result.media_ids),
+            removed=result.removed,
+        ),
+        media_ids=result.media_ids,
+        report_id=report_id,
+        week_id=week.id,
+        now=now,
+    )
+    await notify.enqueue_message(session, chat_id=principal.user.id, text=message, now=now)
+    fresh = await views.report_out(session, report_id, today=today)
+    assert fresh is not None
+    return schemas.ReportEditOut(
+        report=fresh,
+        stamp_level=result.stamp_level.value if result.stamp_level else None,
+        freeze_granted=result.freeze_granted,
+        message=message,
+    )
+
+
+async def _report_media(session: SessionDep, report_id: int) -> list[models.Media]:
+    from sqlalchemy import select
+
+    query = select(models.Media).where(models.Media.report_id == report_id)
+    return list((await session.execute(query)).scalars())
+
+
 @router.post("/reports/{report_id}/cancel", response_model=schemas.CancelOut)
 async def cancel_report(
     report_id: int,
     principal: PrincipalDep,
     session: SessionDep,
+    season: SeasonDep,
     settings: SettingsDep,
     now: NowDep,
 ) -> schemas.CancelOut:
@@ -234,12 +385,22 @@ async def cancel_report(
             return schemas.CancelOut(ok=False, stamp_level=None, message=ru.NOT_REPORT_ALREADY)
         raise HTTPException(status.HTTP_403_FORBIDDEN, ru.NOT_REPORT_FOREIGN)
     row = await session.get(models.Report, report_id)
+    letter = await letters.create(
+        session,
+        season_id=season.id,
+        user_id=principal.user.id,
+        source=letters.Source.NOT_REPORT,
+        text=row.text if row else None,
+        report_id=report_id,
+        now=now,
+    )
     await _notify_admin(
         session,
         settings,
         principal,
         ru.admin_letter_header(principal.user.display_name_with_username, row.text if row else None, corrected=True),
         report_id=report_id,
+        letter_id=letter.id,
         now=now,
     )
     return schemas.CancelOut(
@@ -276,14 +437,28 @@ async def fix_level(
 
 @router.post("/letters", response_model=schemas.MessageOut)
 async def send_letter(
-    body: schemas.TextIn, principal: PrincipalDep, session: SessionDep, settings: SettingsDep, now: NowDep
+    body: schemas.TextIn,
+    principal: PrincipalDep,
+    session: SessionDep,
+    season: SeasonDep,
+    settings: SettingsDep,
+    now: NowDep,
 ) -> schemas.MessageOut:
-    """«Написать Миле»: not a report, no stamp; Mila answers with a reply in her chat."""
+    """«Написать Миле»: not a report, no stamp; stored in her inbox, answered from the chat or the app."""
+    letter = await letters.create(
+        session,
+        season_id=season.id,
+        user_id=principal.user.id,
+        source=letters.Source.APP,
+        text=body.text,
+        now=now,
+    )
     await _notify_admin(
         session,
         settings,
         principal,
         ru.admin_letter_header(principal.user.display_name_with_username, body.text.strip()),
+        letter_id=letter.id,
         now=now,
     )
     return schemas.MessageOut(message=ru.LETTER_SENT)
@@ -472,6 +647,7 @@ async def _notify_admin(
     media_ids: Sequence[uuid.UUID] = (),
     report_id: int | None = None,
     week_id: int | None = None,
+    letter_id: int | None = None,
     now: NowDep,
 ) -> None:
     """Queue a copy for Mila the way the bot sends it; silent for Mila's own actions."""
@@ -486,5 +662,6 @@ async def _notify_admin(
         link_user_id=principal.user.id,
         link_report_id=report_id,
         link_week_id=week_id,
+        link_letter_id=letter_id,
         now=now,
     )

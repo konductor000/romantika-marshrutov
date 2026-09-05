@@ -82,6 +82,21 @@ def date_genitive(day: date) -> str:
 # --- greeting, help, admin ------------------------------------------------------------
 
 
+WEEKDAYS_NOMINATIVE = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+WEEKDAYS_ACCUSATIVE = ["в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу", "в воскресенье"]
+
+
+def deadline_text(week: WeekDTO) -> str:
+    """«воскресенье 06.09, 18:00» — the last day of the week by name, whatever day it falls on:
+    the closing week of a season may end on a Wednesday (DOMAIN §1)."""
+    return f"{WEEKDAYS_NOMINATIVE[week.ends_on.weekday()]} {week.ends_on:%d.%m}, 18:00"
+
+
+def week_end_accusative(week: WeekDTO) -> str:
+    """«в воскресенье» / «в среду» — when the week's results are shown."""
+    return WEEKDAYS_ACCUSATIVE[week.ends_on.weekday()]
+
+
 def greeting(season: SeasonDTO | None) -> str:
     current = escape(season.title) if season else "пока не выбрана"
     return (
@@ -214,6 +229,7 @@ JOURNAL_NOW = "Так он выглядит сейчас. К {end} здесь б
 NOT_REPORT_DONE = "Поняла, это не отчёт — штамп пересчитала. Передаю Миле как сообщение."
 NOT_REPORT_FOREIGN = "Этот отчёт не твой, ничего не трогаю."
 NOT_REPORT_ALREADY = "Этот отчёт уже отменён — всё в порядке."
+EDIT_WEEK_OVER = "Эта неделя уже закрыта — отчёт остаётся как есть. Дописать можно, пока неделя идёт."
 WEEK_ALREADY_OVER = "Эта неделя уже закончилась — задним числом её не меняем. Правка не сохранена."
 REPLY_DELIVERED = "Отправила ✅"
 REPLY_FAILED = "Не дошло — человек, видимо, заблокировал бота"
@@ -252,7 +268,7 @@ def task_text(week: WeekDTO) -> str:
         "",
         RULE,
         "",
-        f"Дедлайн — воскресенье {week.ends_on:%d.%m}, 18:00.",
+        f"Дедлайн — {deadline_text(week)}.",
         "Пришли сюда текст или фото — и это засчитается.",
     ]
     if week.word:
@@ -444,7 +460,7 @@ def report_reply(week: WeekDTO, level: StampLevel, *, freeze_granted: bool) -> s
             "\n\n❄️ И тебе +1 заморозка за первый максимум — это право пропустить неделю так, "
             "чтобы цепочка не порвалась."
         )
-    return text + "\n\nВ воскресенье покажу общие итоги."
+    return text + f"\n\n{week_end_accusative(week).capitalize()} покажу общие итоги."
 
 
 def level_name(level: StampLevel) -> str:
@@ -465,6 +481,34 @@ def admin_report_header(week_number: int, author: str, text: str | None, kind: s
         f"📨 Отчёт за неделю {week_number} от {escape(author)}{body}"
         "\n\n<i>Ответь на это сообщение — я передам ответ автору.</i>"
     )
+
+
+def admin_edit_header(week_number: int, author: str, text: str | None, *, added: int, removed: int) -> str:
+    """Mila's copy of an edited report: what the text is now and what happened to the files."""
+    changes = []
+    if added:
+        changes.append(f"+{added} {plural(added, 'файл', 'файла', 'файлов')}")
+    if removed:
+        changes.append(f"−{removed} {plural(removed, 'файл', 'файла', 'файлов')}")
+    body = f": {escape(text[:300])}" if text else ""
+    tail = f" ({', '.join(changes)})" if changes else ""
+    return (
+        f"✏️ {escape(author)} поправил отчёт за неделю {week_number}{tail}{body}"
+        "\n\n<i>Ответь на это сообщение — я передам ответ автору.</i>"
+    )
+
+
+def edit_reply(week: WeekDTO, level: StampLevel | None, *, freeze_granted: bool) -> str:
+    """The receipt after an edit in the Mini App; names the stamp the week actually has."""
+    if level is StampLevel.MAX:
+        text = f"✏️ Отчёт за неделю «{escape(week.title)}» обновила — штамп со звёздочкой ⭐ на месте."
+    elif level is StampLevel.MIN:
+        text = f"✏️ Отчёт за неделю «{escape(week.title)}» обновила — засчитан как <b>минимум</b> ✅."
+    else:
+        text = f"✏️ Отчёт за неделю «{escape(week.title)}» обновила."
+    if freeze_granted:
+        text += "\n\n❄️ И тебе +1 заморозка за первый максимум."
+    return text
 
 
 def admin_letter_header(author: str, text: str | None, *, corrected: bool = False) -> str:

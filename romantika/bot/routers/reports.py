@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from romantika.bot import keyboards
 from romantika.bot.send import safe_send
 from romantika.domain.types import ReportKind
-from romantika.services import content, jobs, links, reports
+from romantika.services import content, jobs, letters, links, reports
 from romantika.services.content import SeasonDTO
 from romantika.services.gateways import TelegramGateway
 from romantika.services.media import MediaStore
@@ -135,6 +135,7 @@ async def copy_to_admin(
     week_id: int | None,
     now: datetime,
     copy_attachment: bool,
+    letter_id: int | None = None,
 ) -> None:
     if admin_chat is None or user.id == admin_chat:
         return
@@ -156,6 +157,7 @@ async def copy_to_admin(
             user_id=user.id,
             report_id=report_id,
             week_id=week_id,
+            letter_id=letter_id,
             now=now,
         )
 
@@ -188,10 +190,20 @@ async def handle_report(
 
     if result.out_of_week or result.week_number is None:
         await safe_send(bot, chat_id, ru.OUT_OF_WEEK, reply_markup=keyboards.main_keyboard(is_admin=is_admin))
+        letter = await letters.create(
+            session,
+            season_id=season.id,
+            user_id=user.id,
+            source=letters.Source.OUT_OF_WEEK,
+            text=incoming.text,
+            report_id=result.report_id,
+            now=now,
+        )
         await copy_to_admin(
             bot, session, admin_chat=admin_chat, user=user, message=message,
             header=ru.admin_out_of_week_header(author, incoming.text, incoming.kind.value),
             report_id=result.report_id, week_id=None, now=now, copy_attachment=bool(incoming.files),
+            letter_id=letter.id,
         )  # fmt: skip
         return
 

@@ -25,4 +25,4 @@ async def test_downgrade_base_then_upgrade_head(engine: AsyncEngine, database_ur
     await asyncio.to_thread(run_alembic, database_url, "head")
     after_upgrade = await table_names(engine)
     assert "seasons" in after_upgrade
-    assert len(after_upgrade) == 21
+    assert len(after_upgrade) == 22

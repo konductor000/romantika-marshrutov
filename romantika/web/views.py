@@ -7,11 +7,13 @@ from datetime import date, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.config import Settings
+from romantika.db import models
 from romantika.domain.calendar import to_moscow
 from romantika.domain.types import WeekState
 from romantika.domain.tzolkin import tzolkin_day
 from romantika.services import content, freezes, journal, passport, people, reports
 from romantika.services.content import SeasonDTO, WeekDTO
+from romantika.services.journal import ReportDTO
 from romantika.services.passport import PassportView
 from romantika.texts import ru
 from romantika.web import schemas
@@ -95,23 +97,7 @@ async def journal_out(
         user=schemas.Me(id=user.id, first_name=user.first_name, username=user.username, is_admin=principal_admin),
         passport=passport_out(view, reasons),
         weeks=weeks_out(view, today=today),
-        reports=[
-            schemas.ReportOut(
-                id=r.id,
-                week_number=r.week_number,
-                kind=r.kind,
-                level=r.level,
-                text=r.text,
-                created_at=r.created_at,
-                media=[
-                    schemas.MediaOut(
-                        id=str(m.media_id), url=f"/media/{m.media_id}", mime=m.mime, downloaded=m.downloaded
-                    )
-                    for m in r.media
-                ],
-            )
-            for r in reports
-        ],
+        reports=[reports_out(r, week_ends={w.number: w.ends_on for w in view.weeks}, today=today) for r in reports],
         achievements=jview.achievements,
         words=[schemas.WordOut(word=w.word, meaning=w.meaning) for w in jview.words],
         season_words=[
@@ -120,6 +106,37 @@ async def journal_out(
         facts=[f.text for f in jview.facts],
         wish=jview.wish,
     )
+
+
+def reports_out(r: ReportDTO, *, week_ends: dict[int, date], today: date) -> schemas.ReportOut:
+    """One report with its files; `editable` while the week is still open (DOMAIN §2)."""
+    ends_on = week_ends.get(r.week_number) if r.week_number is not None else None
+    return schemas.ReportOut(
+        id=r.id,
+        week_number=r.week_number,
+        kind=r.kind,
+        level=r.level,
+        text=r.text,
+        created_at=r.created_at,
+        edited_at=r.edited_at,
+        editable=reports.editable_until(ends_on, today),
+        media=[
+            schemas.MediaOut(id=str(m.media_id), url=f"/media/{m.media_id}", mime=m.mime, downloaded=m.downloaded)
+            for m in r.media
+        ],
+    )
+
+
+async def report_out(session: AsyncSession, report_id: int, *, today: date) -> schemas.ReportOut | None:
+    """A single report re-read after an edit, in the journal's shape."""
+    row = await session.get(models.Report, report_id)
+    if row is None:
+        return None
+    for dto in await journal.reports_for_user(session, season_id=row.season_id, user_id=row.user_id):
+        if dto.id == report_id:
+            weeks = await content.weeks(session, row.season_id)
+            return reports_out(dto, week_ends={w.number: w.ends_on for w in weeks}, today=today)
+    return None
 
 
 def week_word_out(week: WeekDTO) -> schemas.WeekWordOut:
@@ -156,7 +173,7 @@ async def home_out(
             **base.model_dump(),
             intent=choice.value if choice else None,
             reports_count=await reports.count_for_week(session, user_id=user_id, week_id=current.id),
-            deadline=f"воскресенье {current.ends_on:%d.%m}, 18:00",
+            deadline=ru.deadline_text(current),
         )
     upcoming = next((w for w in weeks if w.starts_on > today), None)
     wish = await journal.wish_for(session, season_id=season.id, user_id=user_id)

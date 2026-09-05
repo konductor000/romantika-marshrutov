@@ -13,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from romantika.db import models
 from romantika.domain.calendar import to_moscow
 from romantika.pdf.journal import render_journal_pdf
-from romantika.services import content, jobs, journal, links, notify, passport, reminders
+from romantika.services import content, jobs, journal, links, notify, passport, reminders, stamps
 from romantika.services.gateways import TelegramGateway
 from romantika.services.media import MediaStore
+from romantika.texts import ru
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,11 @@ async def handle_journal_pdf(session: AsyncSession, payload: dict[str, Any], ctx
     target = ctx.media_store.full_path(relative)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(pdf)
-    caption = f"📔 Твой журнал сезона «{season.title}»"
+    caption = (
+        f"📔 Сезон «{season.title}» закончился. Вот твой журнал: недели, фото, слова, факты — всё, что ты прожил."
+        if payload.get("requested_via") == "season_end"
+        else f"📔 Твой журнал сезона «{season.title}»"
+    )
     await ctx.telegram.send_document(chat_id, target, caption)
     return {"result_path": relative, "bytes": len(pdf)}
 
@@ -99,6 +104,7 @@ async def handle_telegram_notify(session: AsyncSession, payload: dict[str, Any],
                 user_id=int(link["user_id"]),
                 report_id=link.get("report_id"),
                 week_id=link.get("week_id"),
+                letter_id=link.get("letter_id"),
                 now=ctx.now,
             )
     return {"sent": len(message_ids), "skipped": skipped}
@@ -107,14 +113,48 @@ async def handle_telegram_notify(session: AsyncSession, payload: dict[str, Any],
 async def handle_reminders_now(session: AsyncSession, payload: dict[str, Any], ctx: Context) -> dict[str, Any] | None:
     """«Напомнить сейчас» pressed in the admin Mini App: same texts and recipients as the bot."""
     season_id = int(payload["season_id"])
-    result = await reminders.send(session, season_id=season_id, week_number=None, telegram=ctx.telegram, now=ctx.now)
+    week_number = payload.get("week_number")
+    result = await reminders.send(
+        session,
+        season_id=season_id,
+        week_number=int(week_number) if week_number is not None else None,
+        telegram=ctx.telegram,
+        now=ctx.now,
+    )
     requested_by = payload.get("requested_by")
     if requested_by is not None:
         await ctx.telegram.send_message(int(requested_by), result.describe())
     return {"sent": result.sent, "total": result.total}
 
 
+async def handle_season_journals(session: AsyncSession, payload: dict[str, Any], ctx: Context) -> dict[str, Any] | None:
+    """The season is over: queue one `journal_pdf` per participant with a stamp (DOMAIN §7).
+
+    One job per person, so a single broken journal never blocks the others; the admin gets
+    a note with the count. Idempotent through the reminder log key the scheduler uses.
+    """
+    season_id = int(payload["season_id"])
+    season = await content.require_season(session, season_id)
+    recipients = sorted(await stamps.users_with_stamps(session, season_id))
+    for user_id in recipients:
+        await jobs.enqueue(
+            session,
+            "journal_pdf",
+            {"user_id": user_id, "season_id": season_id, "chat_id": user_id, "requested_via": "season_end"},
+            now=ctx.now,
+        )
+    admin_chat = payload.get("admin_chat")
+    if admin_chat is not None:
+        await ctx.telegram.send_message(
+            int(admin_chat),
+            f"📔 Сезон «{season.title}» закончился — собираю журналы: {len(recipients)} "
+            f"{ru.plural(len(recipients), 'человек', 'человека', 'человек')} со штампами.",
+        )
+    return {"queued": len(recipients)}
+
+
 HANDLERS: dict[str, Handler] = {
+    "season_journals": handle_season_journals,
     "media_download": handle_media_download,
     "journal_pdf": handle_journal_pdf,
     "broadcast": handle_broadcast,
