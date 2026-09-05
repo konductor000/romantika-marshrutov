@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from romantika.db import models
 from romantika.domain.calendar import to_moscow
-from romantika.pdf.journal import render_journal_pdf
-from romantika.services import content, jobs, journal, links, notify, passport, reminders, stamps
+from romantika.pdf.journal import journal_filename, render_journal_pdf
+from romantika.services import content, jobs, journal, links, notify, reminders, stamps
 from romantika.services.gateways import TelegramGateway
 from romantika.services.media import MediaStore
 from romantika.texts import ru
@@ -43,10 +43,10 @@ async def handle_journal_pdf(session: AsyncSession, payload: dict[str, Any], ctx
     today = to_moscow(ctx.now).date()
     season = await content.require_season(session, season_id)
     view = await journal.build(session, season_id=season_id, user_id=user_id, today=today)
-    level = (await passport.build(session, season_id=season_id, user_id=user_id, today=today)).level
-    pdf = render_journal_pdf(view, media_root=ctx.media_store.root, level=level)
+    pdf = render_journal_pdf(view, media_root=ctx.media_store.root)
 
-    relative = f"journals/{season.slug}/{user_id}-{ctx.now:%Y%m%d-%H%M%S}.pdf"
+    filename = journal_filename(season.title, view.user.first_name if view.user else None)
+    relative = f"journals/{season.slug}/{user_id}/{ctx.now:%Y%m%d-%H%M%S}/{filename}"
     target = ctx.media_store.full_path(relative)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(pdf)
@@ -145,10 +145,15 @@ async def handle_season_journals(session: AsyncSession, payload: dict[str, Any],
         )
     admin_chat = payload.get("admin_chat")
     if admin_chat is not None:
-        await ctx.telegram.send_message(
-            int(admin_chat),
-            f"📔 Сезон «{season.title}» закончился — собираю журналы: {len(recipients)} "
-            f"{ru.plural(len(recipients), 'человек', 'человека', 'человек')} со штампами.",
+        # Queued, not sent: a Telegram hiccup here must not roll the journal jobs back.
+        await notify.enqueue_message(
+            session,
+            chat_id=int(admin_chat),
+            text=(
+                f"📔 Сезон «{season.title}» закончился — собираю журналы: {len(recipients)} "
+                f"{ru.plural(len(recipients), 'человек', 'человека', 'человек')} со штампами."
+            ),
+            now=ctx.now,
         )
     return {"queued": len(recipients)}
 

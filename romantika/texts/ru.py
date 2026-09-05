@@ -26,9 +26,9 @@ LEVEL_NAMES: dict[Level | None, str] = {
     Level.RESIDENT: "Резидент",
     Level.TRAVELER: "Путешественник",
     Level.TOURIST: "Турист",
-    None: "Ещё не в пути",
+    None: "Ещё в пути",
 }
-JOURNAL_LEVEL_NAMES: dict[Level | None, str] = {**LEVEL_NAMES, None: "Ещё в пути"}
+JOURNAL_LEVEL_NAMES: dict[Level | None, str] = LEVEL_NAMES
 
 FREEZE_REASONS: dict[str, str] = {
     "word": "за своё слово в словарике",
@@ -84,12 +84,18 @@ def date_genitive(day: date) -> str:
 
 WEEKDAYS_NOMINATIVE = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 WEEKDAYS_ACCUSATIVE = ["в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу", "в воскресенье"]
+WEEKDAYS_GENITIVE = ["понедельника", "вторника", "среды", "четверга", "пятницы", "субботы", "воскресенья"]
 
 
 def deadline_text(week: WeekDTO) -> str:
     """«воскресенье 06.09, 18:00» — the last day of the week by name, whatever day it falls on:
     the closing week of a season may end on a Wednesday (DOMAIN §1)."""
     return f"{WEEKDAYS_NOMINATIVE[week.ends_on.weekday()]} {week.ends_on:%d.%m}, 18:00"
+
+
+def deadline_short(week: WeekDTO) -> str:
+    """«до воскресенья, 18:00» — for a status line where the date would be noise."""
+    return f"до {WEEKDAYS_GENITIVE[week.ends_on.weekday()]}, 18:00"
 
 
 def week_end_accusative(week: WeekDTO) -> str:
@@ -106,53 +112,98 @@ def greeting(season: SeasonDTO | None) -> str:
         "Каждый понедельник тут появляется задание: минимум на пять минут "
         "и максимум на вечер. Оба необязательные.\n\n"
         "Чтобы сдать — просто пришли сюда текст или фото. "
-        "Больше нажимать ничего не надо.\n\n"
-        "Начни с «📋 Задание» 👇"
+        "Больше нажимать ничего не надо."
     )
 
 
-HELP = (
-    "<b>Если что-то пошло не так</b>\n\n"
-    "<b>Бот записал не так, как я хотел</b>\n"
-    "Текст засчитывается как минимум, фото — как максимум. Под ответом бота "
-    "есть кнопка, чтобы поправить.\n\n"
-    "<b>Хочу дослать фото или переделать</b>\n"
-    "Просто пришли ещё раз. Штамп не потеряется, и максимум не понизится "
-    "обратно до минимума.\n\n"
-    "<b>Пропустил неделю</b>\n"
-    "Ничего страшного. На сезон есть <b>две заморозки</b>: пропущенная неделя "
-    "тратит одну, но цепочка не рвётся и ты остаёшься в строю. Тратятся сами, "
-    "просить не надо. Когда кончатся — участие всё равно продолжается: "
-    "это клуб, а не школа.\n\n"
-    "<b>Как заработать ещё заморозку</b>\n"
-    "Всего можно накопить пять. Сверх двух базовых:\n"
-    "· +1 за своё слово в словарике — сразу, автоматически\n"
-    "· +1 за первый выполненный максимум — тоже автоматически\n"
-    "· +1 от меня за комментарий в канале, приход на встречу "
-    "или приведённого друга\n\n"
-    "<b>Пришёл в середине сезона</b>\n"
-    "Заходи с любой недели, догонять с начала не нужно. Ничей результат "
-    "не считается поздним.\n\n"
-    "<b>Не знаю, что написать</b>\n"
-    "Минимум — это правда одно слово. «Чимичанга» — уже полноценный отчёт.\n\n"
-    "<b>Не хочу писать в комментариях в канале</b>\n"
-    "И не надо. Присылай сюда — я всё увижу. В воскресном посте назову тебя "
-    "по имени, а если не хочешь и этого — скажи, не буду.\n\n"
-    "<b>Много уведомлений</b>\n"
-    "Напоминания приходят только тем, кто нажал «Берусь» или «Попробую», "
-    "и не чаще двух раз за неделю. Нажми «В этот раз мимо» — не придёт "
-    "ничего.\n\n"
-    "<b>Пропали кнопки или не видно задание</b>\n"
-    "Напиши /start — клавиатура перерисуется.\n\n"
-    "<b>Хочу добавить своё слово в словарик</b>\n"
-    "Открой «📖 Словарь», внизу кнопка «➕ Добавить своё слово».\n\n"
-    "<b>Я что-то сделал, а заморозку не дали</b>\n"
-    "Скорее всего я просто не заметила — комментарии и встречи бот "
-    "не видит. Жми «✉️ Написать Миле» и скажи, я поставлю.\n\n"
-    "<b>Что-то другое</b>\n"
-    "Жми «✉️ Написать Миле» — это обычное сообщение, не отчёт по заданию. "
-    "Я прочитаю и отвечу. Это я, а не робот."
+GREETING_CTA = "\n\nНачни с «📋 Задание» 👇"
+"""The bot appends this to the greeting; the Mini App shows the greeting without it."""
+
+
+#: (heading, answer in the bot, answer in the Mini App or None when it is the same).
+#: The two surfaces have different buttons, so the answers that point at a button differ.
+_HELP_ITEMS: tuple[tuple[str, str, str | None], ...] = (
+    (
+        "Бот записал не то, что нужно",
+        "Текст засчитывается как минимум, фото — как максимум. Если это был максимум, "
+        "под ответом бота есть кнопка «⭐ Это был максимум». Текст и фото отчёта можно "
+        "поправить в приложении, пока неделя идёт.",
+        "Текст засчитывается как минимум, фото — как максимум. Если это был максимум, "
+        "под ответом есть кнопка «⭐ Это был максимум». Текст и фото отчёта можно "
+        "поправить в «Журнале», пока неделя идёт.",
+    ),
+    (
+        "Хочу дослать фото или переделать",
+        "Просто пришли ещё раз. Штамп не потеряется, и максимум не понизится обратно до минимума.",
+        None,
+    ),
+    (
+        "Пропуск недели",
+        "Ничего страшного. На сезон есть <b>две заморозки</b>: пропущенная неделя "
+        "тратит одну, но цепочка не рвётся и ты остаёшься в строю. Тратятся сами, "
+        "просить не надо. Когда кончатся — участие всё равно продолжается: "
+        "это клуб, а не школа.",
+        None,
+    ),
+    (
+        "Как заработать ещё заморозку",
+        "Всего можно накопить пять. Сверх двух базовых:\n"
+        "· +1 за своё слово в словарике — сразу, автоматически\n"
+        "· +1 за первый выполненный максимум — тоже автоматически\n"
+        "· +1 от меня за комментарий в канале, приход на встречу или приведённого друга",
+        None,
+    ),
+    (
+        "Старт в середине сезона",
+        "Заходи с любой недели, догонять с начала не нужно. Ничей результат не считается поздним.",
+        None,
+    ),
+    ("Не знаю, что написать", "Минимум — это правда одно слово. «Чимичанга» — уже полноценный отчёт.", None),
+    (
+        "Не хочу писать в комментариях в канале",
+        "И не надо. Присылай сюда — я всё увижу. В воскресном посте назову тебя "
+        "по имени, а если не хочешь и этого — скажи, не буду.",
+        None,
+    ),
+    (
+        "Много уведомлений",
+        "Напоминания приходят только тем, кто нажал «Берусь» или «Попробую», "
+        "и не чаще двух раз за неделю. Нажми «В этот раз мимо» — не придёт ничего.",
+        None,
+    ),
+    (
+        "Пропали кнопки или не видно задание",
+        "Напиши /start — клавиатура перерисуется.",
+        "Закрой приложение и открой снова. Если кнопки пропали в чате с ботом — напиши там /start.",
+    ),
+    (
+        "Хочу добавить своё слово в словарик",
+        "Открой «📖 Словарь» — там есть кнопка «➕ Добавить своё слово».",
+        "Открой «Словарь» — форма «Записать» наверху.",
+    ),
+    (
+        "Заморозку не дали",
+        "Скорее всего я просто не заметила — комментарии и встречи бот "
+        "не видит. Жми «✉️ Написать Миле» и скажи, я поставлю.",
+        "Скорее всего я просто не заметила — комментарии и встречи бот "
+        "не видит. Напиши мне ниже, в «Написать Миле», я поставлю.",
+    ),
+    (
+        "Что-то другое",
+        "Жми «✉️ Написать Миле» — это обычное сообщение, не отчёт по заданию. Я прочитаю и отвечу. Это я, а не робот.",
+        "Напиши мне в «Написать Миле» ниже — это обычное сообщение, не отчёт по заданию. "
+        "Я прочитаю и отвечу. Это я, а не робот.",
+    ),
 )
+
+
+def help_text(*, app: bool = False) -> str:
+    """The FAQ, phrased for the bot's buttons or for the Mini App's screens."""
+    items = [f"<b>{heading}</b>\n{(in_app if app and in_app else in_bot)}" for heading, in_bot, in_app in _HELP_ITEMS]
+    return "<b>Если что-то пошло не так</b>\n\n" + "\n\n".join(items)
+
+
+HELP = help_text()
 
 PANEL = (
     "<b>⚙️ Панель</b>\n\n"
@@ -200,8 +251,8 @@ NO_SEASON = "Сезон ещё не начался. Как только ранд
 MORE_MENU = "Что открыть:"
 WRITE_PROMPT = (
     "Пиши. Я прочитаю и отвечу — это не отчёт по заданию, а обычное сообщение.\n\n"
-    "<i>Если сделала что-то, за что положена заморозка — оставила комментарий, "
-    "привела кого-то, пришла на встречу — тоже напиши сюда. Я могла не заметить.</i>"
+    "<i>Если за тобой заморозка — комментарий в канале, приведённый друг, "
+    "встреча — тоже напиши сюда. Я могла не заметить.</i>"
 )
 LETTER_SENT = "Передала ✅ Отвечу, как увижу."
 WORD_PROMPT = (
@@ -224,9 +275,9 @@ NOT_UNDERSTOOD = (
     "Не поняла 🙈 Отчёт — это текст, фото, видео, кружок, голосовое или файл. "
     "Пришли что-то из этого, и я поставлю штамп."
 )
-OUT_OF_WEEK = "Спасибо! Сейчас неделя сезона не идёт, так что штамп не ставлю — но сообщение сохранила и передала Миле."
+OUT_OF_WEEK = "Спасибо! Сейчас неделя сезона не идёт, так что штамп не ставлю — но сообщение сохранила и прочитаю."
 JOURNAL_NOW = "Так он выглядит сейчас. К {end} здесь будет весь сезон."
-NOT_REPORT_DONE = "Поняла, это не отчёт — штамп пересчитала. Передаю Миле как сообщение."
+NOT_REPORT_DONE = "Поняла, это не отчёт — штамп пересчитала. Сохранила как обычное сообщение, прочитаю."
 NOT_REPORT_FOREIGN = "Этот отчёт не твой, ничего не трогаю."
 NOT_REPORT_ALREADY = "Этот отчёт уже отменён — всё в порядке."
 EDIT_WEEK_OVER = "Эта неделя уже закрыта — отчёт остаётся как есть. Дописать можно, пока неделя идёт."
@@ -363,9 +414,9 @@ def end_of_season_text(season: SeasonDTO) -> str:
         "<b>журнал сезона</b> — свой собственный, не общий.\n\n"
         "Внутри будет:\n"
         "· твои недели и что в них было — твоими же словами\n"
-        "· твои фотографии, которые ты присылал сюда\n"
+        "· фотографии из твоих отчётов\n"
         "· ачивки, которые у тебя набрались\n"
-        "· словарик: слова сезона и те, что добавили вы сами\n"
+        "· словарик: слова сезона и слова участников\n"
         "· несколько слов лично от меня\n\n"
         "Это не сертификат об окончании. Это чтобы в ноябре было видно: "
         "три месяца прожиты, а не пролистаны."
@@ -385,7 +436,7 @@ def dictionary_text(season: SeasonDTO, view: DictionaryView, names: dict[int, st
     else:
         lines.append("Слова недели появятся вместе с заданиями.")
     if view.user_words:
-        lines += ["", RULE, "", "<b>Ваши слова</b>", ""]
+        lines += ["", RULE, "", "<b>Слова участников</b>", ""]
         for entry in view.user_words:
             text = escape(entry.word) + (f" — {escape(entry.meaning)}" if entry.meaning else "")
             lines.append(f"{text} <i>— {escape(names.get(entry.user_id, str(entry.user_id)))}</i>")
@@ -398,7 +449,7 @@ def facts_text(season: SeasonDTO, facts: list[FactDTO], names: dict[int, str], *
     if not facts:
         return (
             f"<b>💡 Что мы узнали про {about}</b>\n\n"
-            "Пока пусто. Жми «➕ Добавить свой факт» — что зацепило из постов или что раскопал сам."
+            "Пока пусто. Жми «➕ Добавить свой факт» — что зацепило из постов или нашлось само."
         )
     lines = [f"<b>💡 Что мы узнали про {about}</b>", f"<i>Собрано вместе: {len(facts)}</i>", "", RULE, ""]
     for index, fact in enumerate(facts, 1):
@@ -450,11 +501,22 @@ def journal_text(view: JournalView, level: Level | None) -> str:
 # --- report replies ------------------------------------------------------------------
 
 
-def report_reply(week: WeekDTO, level: StampLevel, *, freeze_granted: bool) -> str:
+def report_reply(
+    week: WeekDTO, level: StampLevel, *, stamp_level: StampLevel | None = None, freeze_granted: bool
+) -> str:
+    """The receipt for one report: what it counted as and what the week's stamp is now.
+
+    `level` is this report's own level, `stamp_level` the week's stamp after it. A stamp never
+    goes down (DOMAIN §2), so a text sent after a photo is a minimum while the star stays —
+    the receipt has to say both, or it reads as «the star is gone».
+    """
+    title = escape(week.title)
     if level is StampLevel.MAX:
-        text = f"⭐ Записала как <b>максимум</b> — штамп со звёздочкой за неделю «{escape(week.title)}»."
+        text = f"⭐ Записала как <b>максимум</b> — штамп со звёздочкой за неделю «{title}»."
+    elif stamp_level is StampLevel.MAX:
+        text = f"✅ Записала как <b>минимум</b>. Звёздочка за неделю «{title}» у тебя уже есть — она остаётся."
     else:
-        text = f"✅ Записала как <b>минимум</b> — штамп за неделю «{escape(week.title)}»."
+        text = f"✅ Записала как <b>минимум</b> — штамп за неделю «{title}»."
     if freeze_granted:
         text += (
             "\n\n❄️ И тебе +1 заморозка за первый максимум — это право пропустить неделю так, "
@@ -475,8 +537,12 @@ INTENT_HINTS = {
 INTENT_NAMES = {"take": "берусь", "try": "попробую", "skip": "мимо"}
 
 
+#: How much of a report's text Mila's copy carries (Telegram's cap is 4096 for the whole message).
+ADMIN_COPY_CHARS = 3500
+
+
 def admin_report_header(week_number: int, author: str, text: str | None, kind: str) -> str:
-    body = f": {escape(text[:300])}" if text else f" ({kind})"
+    body = f": {escape(clip(text, ADMIN_COPY_CHARS))}" if text else f" ({kind})"
     return (
         f"📨 Отчёт за неделю {week_number} от {escape(author)}{body}"
         "\n\n<i>Ответь на это сообщение — я передам ответ автору.</i>"
@@ -490,7 +556,7 @@ def admin_edit_header(week_number: int, author: str, text: str | None, *, added:
         changes.append(f"+{added} {plural(added, 'файл', 'файла', 'файлов')}")
     if removed:
         changes.append(f"−{removed} {plural(removed, 'файл', 'файла', 'файлов')}")
-    body = f": {escape(text[:300])}" if text else ""
+    body = f": {escape(clip(text, ADMIN_COPY_CHARS))}" if text else ""
     tail = f" ({', '.join(changes)})" if changes else ""
     return (
         f"✏️ Правка отчёта за неделю {week_number} от {escape(author)}{tail}{body}"
@@ -512,11 +578,19 @@ def edit_reply(week: WeekDTO, level: StampLevel | None, *, freeze_granted: bool)
 
 
 def admin_letter_header(author: str, text: str | None, *, corrected: bool = False) -> str:
-    suffix = " (прислал как отчёт, потом поправил)" if corrected else ""
+    suffix = " (сначала пришло как отчёт)" if corrected else ""
     return (
         f"✉️ <b>Сообщение от {escape(author)}</b>{suffix}\n\n{escape(text or '(без текста)')}"
         "\n\n<i>Ответь реплаем — передам.</i>"
     )
+
+
+def admin_word_added(author: str, text: str) -> str:
+    return f"📖 Новое слово от {escape(author)}: {escape(text)}"
+
+
+def admin_fact_added(author: str, text: str) -> str:
+    return f"💡 Новый факт от {escape(author)}: {escape(text)}"
 
 
 def admin_out_of_week_header(author: str, text: str | None, kind: str) -> str:
@@ -524,8 +598,22 @@ def admin_out_of_week_header(author: str, text: str | None, kind: str) -> str:
     return f"✉️ <b>Сообщение от {escape(author)}</b> (неделя не идёт)\n\n{body}\n\n<i>Ответь реплаем — передам.</i>"
 
 
-def reply_to_author(text: str) -> str:
-    return f"💬 <b>Мила ответила на твой отчёт:</b>\n\n{escape(text)}"
+def reply_to_author(text: str, *, about: str = "report") -> str:
+    """Mila's answer as the participant sees it: to a report, to a letter, or out of the blue."""
+    head = {
+        "report": "Мила ответила на твой отчёт:",
+        "letter": "Мила ответила на твоё сообщение:",
+        "message": "Сообщение от Милы:",
+    }[about]
+    return f"💬 <b>{head}</b>\n\n{escape(text)}"
+
+
+def clip(text: str, limit: int) -> str:
+    """Cut with an ellipsis at a word, so the reader sees there was more."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1].rsplit(" ", 1)[0] if " " in text[: limit - 1] else text[: limit - 1]
+    return cut.rstrip(" ,;:—-") + "…"
 
 
 # --- admin screens -------------------------------------------------------------------
@@ -538,15 +626,16 @@ def summary_text(summary: WeekSummary, names: dict[int, str], core: CoreView) ->
         "",
         f"<b>Взялись ({len(summary.took)})</b>",
     ]
-    lines += [f"· {escape(names.get(u, str(u)))}" for u in summary.took] or ["· пока никто"]
+    by_name = lambda u: names.get(u, str(u)).lower()  # noqa: E731
+    lines += [f"· {escape(names.get(u, str(u)))}" for u in sorted(summary.took, key=by_name)] or ["· пока никто"]
     lines += ["", f"<b>Сдали ({len(summary.submitted)})</b>"]
     lines += [
         ("⭐ " if level is StampLevel.MAX else "✅ ") + escape(names.get(u, str(u)))
-        for u, level in summary.submitted.items()
+        for u, level in sorted(summary.submitted.items(), key=lambda item: by_name(item[0]))
     ] or ["· пока никто"]
     if summary.took_not_submitted:
         lines += ["", f"<b>Взялись, но не прислали ({len(summary.took_not_submitted)})</b>"]
-        lines += [f"· {escape(names.get(u, str(u)))}" for u in summary.took_not_submitted]
+        lines += [f"· {escape(names.get(u, str(u)))}" for u in sorted(summary.took_not_submitted, key=by_name)]
         lines += ["", "Разослать им напоминание: /remind"]
     lines += ["", f"<b>Сдали две недели подряд: {len(core.best)}</b>"]
     lines += [f"· {escape(names.get(u, str(u)))}" for u in core.best] or ["· пока никто · подробнее: /core"]
@@ -627,15 +716,15 @@ def freeze_given(reason: str) -> str:
     )
 
 
-def reminder_thursday(week_title: str) -> str:
+def reminder_thursday(week: WeekDTO) -> str:
     return (
-        f"Впереди выходные — как раз время сделать задание недели «{escape(week_title)}».\n\n"
-        "Дедлайн — воскресенье, 18:00. Пришли сюда текст или фото, и всё."
+        f"Впереди выходные — как раз время сделать задание недели «{escape(week.title)}».\n\n"
+        f"Дедлайн — {deadline_text(week)}. Пришли сюда текст или фото, и всё."
     )
 
 
-def reminder_sunday(week_title: str) -> str:
+def reminder_sunday(week: WeekDTO) -> str:
     return (
-        f"Сегодня до 18:00 — дедлайн по заданию «{escape(week_title)}».\n\n"
+        f"Сегодня до 18:00 — дедлайн по заданию «{escape(week.title)}».\n\n"
         "Даже минимум на пять минут считается. Вечером покажу общие итоги."
     )

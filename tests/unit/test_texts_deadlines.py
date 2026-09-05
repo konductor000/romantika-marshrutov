@@ -29,3 +29,11 @@ def test_closing_week_ends_on_wednesday() -> None:
     assert ru.deadline_text(last) == "среда 18.11, 18:00"
     assert ru.week_end_accusative(last) == "в среду"
     assert "В среду покажу общие итоги" in ru.report_reply(last, StampLevel.MIN, freeze_granted=False)
+
+
+def test_the_journal_file_is_named_after_the_season_and_the_person() -> None:
+    from romantika.pdf.journal import journal_filename
+
+    assert journal_filename("Мексика", "Алиса") == "Романтика-Мексика-Алиса.pdf"
+    assert journal_filename("Мексика", None) == "Романтика-Мексика.pdf"
+    assert journal_filename("Южная Корея", "Al/ice ../x") == "Романтика-Южная-Корея-Al-ice-x.pdf"

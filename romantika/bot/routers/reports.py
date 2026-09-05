@@ -6,7 +6,6 @@ import logging
 from datetime import date, datetime
 
 from aiogram import Bot, Router
-from aiogram.exceptions import TelegramAPIError
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -147,7 +146,7 @@ async def copy_to_admin(
         try:
             copied = await bot.copy_message(admin_chat, from_chat_id=message.chat.id, message_id=message.message_id)
             sent_ids.append(copied.message_id)
-        except TelegramAPIError as exc:
+        except Exception as exc:
             logger.warning("copy_to_admin_failed", extra={"user_id": user.id, "error": str(exc)})
     for message_id in sent_ids:
         await links.remember(
@@ -216,7 +215,7 @@ async def handle_report(
     await safe_send(
         bot,
         chat_id,
-        ru.report_reply(week, level, freeze_granted=result.freeze_granted),
+        ru.report_reply(week, result.level, stamp_level=result.stamp_level, freeze_granted=result.freeze_granted),
         reply_markup=keyboards.report_buttons(week.number, level, result.report_id),
     )
     await copy_to_admin(

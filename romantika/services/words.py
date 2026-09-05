@@ -83,6 +83,8 @@ async def add(
     if not word:
         raise ValueError("a dictionary entry needs a word")
     await people.ensure_member(session, season_id, user_id, now=now)
+    if await _has_word(session, season_id=season_id, user_id=user_id, word=word[:WORD_LENGTH]):
+        raise ValueError(f"слово «{word[:WORD_LENGTH]}» у тебя в словарике уже есть")
 
     first = await _count(session, season_id=season_id, user_id=user_id) == 0
     row = models.Word(
@@ -151,6 +153,19 @@ async def for_user(session: AsyncSession, *, season_id: int, user_id: int) -> li
         )
         for row in (await session.execute(query)).scalars()
     ]
+
+
+async def _has_word(session: AsyncSession, *, season_id: int, user_id: int, word: str) -> bool:
+    query = (
+        select(func.count())
+        .select_from(models.Word)
+        .where(
+            models.Word.season_id == season_id,
+            models.Word.user_id == user_id,
+            func.lower(models.Word.word) == word.lower(),
+        )
+    )
+    return int((await session.execute(query)).scalar_one()) > 0
 
 
 async def _count(session: AsyncSession, *, season_id: int, user_id: int) -> int:

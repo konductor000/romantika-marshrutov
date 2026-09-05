@@ -242,7 +242,7 @@ async def test_cancel_recomputes_stamp_and_level_fix_never_downgrades(app: App) 
     assert (
         await app.client.post(f"/api/reports/{first['report_id']}/cancel", headers=app.headers(BOB))
     ).status_code == 403
-    letter = [j for j in await app.jobs("telegram_notify") if "поправил" in (j.payload["text"] or "")]
+    letter = [j for j in await app.jobs("telegram_notify") if "сначала пришло как отчёт" in (j.payload["text"] or "")]
     assert len(letter) == 1 and letter[0].payload["link"]["report_id"] == first["report_id"]
     none = (await app.client.post("/api/weeks/1/level", json={"level": "max"}, headers=app.headers(BOB))).json()
     assert none["ok"] is False and "отчёта нет" in none["message"]
@@ -278,7 +278,7 @@ async def test_word_fact_letter_and_dictionary(app: App) -> None:
     )
     assert r.status_code == 200 and "Передала" in r.json()["message"]
     texts = [j.payload["text"] for j in await app.jobs("telegram_notify")]
-    assert any("добавил слово" in t for t in texts) and any("добавил факт" in t for t in texts)
+    assert any("Новое слово от" in t for t in texts) and any("Новый факт от" in t for t in texts)
     assert any("Сообщение от" in t and "комментарий" in t for t in texts)
     assert (await app.client.post("/api/letters", json={"text": ""}, headers=app.headers(ALICE))).status_code == 422
 
@@ -303,7 +303,7 @@ async def test_admin_reminders_remind_and_message(app: App) -> None:
     (note,) = await app.jobs("telegram_notify")
     assert (
         note.payload["chat_id"] == ALICE
-        and "Мила ответила" in note.payload["text"]
+        and "Сообщение от Милы" in note.payload["text"]
         and "Молодец" in note.payload["text"]
     )
     assert (

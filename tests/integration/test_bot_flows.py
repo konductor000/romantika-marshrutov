@@ -57,7 +57,7 @@ async def test_word_dialog_saves_word_clears_state_and_grants_freeze(
     assert "+1 заморозка" in harness.session.last_text(ALICE), "the first own word earns a freeze"
     freezes = (await db_session.execute(select(models.Freeze.reason).where(models.Freeze.user_id == ALICE))).scalars()
     assert list(freezes) == ["word"]
-    assert "добавил слово" in harness.session.all_text(ADMIN_ID)
+    assert "Новое слово от" in harness.session.all_text(ADMIN_ID)
     assert await count(db_session, models.Report) == 0, "an answer to the bot is not a report"
 
 
@@ -89,7 +89,7 @@ async def test_fact_dialog_from_participant_keeps_the_author(harness: Harness, d
     fact = (await db_session.execute(select(models.Fact))).scalar_one()
     assert fact.text == "Ацтеки называли себя мешика" and fact.author_id == ALICE
     assert await dialog_row(db_session, ALICE) is None
-    assert "добавил факт" in harness.session.all_text(ADMIN_ID)
+    assert "Новый факт от" in harness.session.all_text(ADMIN_ID)
 
 
 async def test_fact_dialog_from_admin_has_no_author(harness: Harness, db_session: AsyncSession) -> None:
@@ -238,7 +238,7 @@ async def test_notreport_removes_the_only_stamp_and_sends_the_letter_to_mila(
     assert report.deleted_at is not None
     assert await count(db_session, models.Stamp) == 0, "no reports left → the stamp is removed"
     assert "штамп пересчитала" in harness.session.last_text(ALICE)
-    letters = [t for t in harness.session.sent_texts(ADMIN_ID) if "поправил" in t]
+    letters = [t for t in harness.session.sent_texts(ADMIN_ID) if "сначала пришло как отчёт" in t]
     assert letters and "Это вообще не отчёт" in letters[-1]
     links = (await db_session.execute(select(models.AdminLink).where(models.AdminLink.report_id == report.id))).all()
     assert links, "Mila can reply to the corrected message"
@@ -1014,10 +1014,10 @@ async def test_task_screen_names_the_deadline_and_the_word(harness: Harness) -> 
 
 
 async def test_a_second_report_does_not_claim_the_star_was_lost(harness: Harness, db_session: AsyncSession) -> None:
-    """The answer names the level of the *stamp*, not of the last message (DOMAIN §2).
+    """The answer names both: this report is a minimum, and the week's star stays (DOMAIN §2).
 
     Before the fix a text sent after a photo answered «✅ Записала как минимум — штамп за
-    неделю», while the stamp in the database stayed ⭐.
+    неделю», which reads as «the star is gone», while the stamp in the database stayed ⭐.
     """
     await harness.photo(ALICE)
     await harness.text(ALICE, "а ещё написала пару строк")
@@ -1025,8 +1025,8 @@ async def test_a_second_report_does_not_claim_the_star_was_lost(harness: Harness
     stamp = (await db_session.execute(select(models.Stamp))).scalar_one()
     assert stamp.level == "max"
     reply = harness.session.last_text(ALICE)
-    assert "максимум" in reply and "звёздочкой" in reply
-    assert "Записала как <b>минимум</b>" not in reply
+    assert "Записала как <b>минимум</b>" in reply, "the text itself counts as a minimum"
+    assert "Звёздочка" in reply and "остаётся" in reply, "and the receipt says the star stays"
     assert "+1 заморозка" not in reply, "the freeze is granted once"
 
     labels = [label for label, _ in harness.session.buttons(ALICE)]

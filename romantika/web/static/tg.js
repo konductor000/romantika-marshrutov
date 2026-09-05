@@ -97,9 +97,17 @@
     return r === 1 ? one : r >= 2 && r <= 4 ? two : many;
   };
 
-  RM.levelName = { tourist: "Турист", traveler: "Путешественник", resident: "Резидент" };
+  RM.levelName = { tourist: "Турист", traveler: "Путешественник", resident: "Резидент", "": "Ещё в пути" };
   RM.stateMark = { stamped: "✅", current: "▸", frozen: "❄️", missed: "◦", before_join: "◦", locked: "🔒" };
-  RM.freezeReason = { word: "за своё слово в словарике", max: "за первый максимум", comment: "за комментарий", meetup: "за встречу", friend: "за приведённого друга", manual: "от Милы" };
+  RM.freezeReason = { word: "за своё слово в словарике", max: "за первый выполненный максимум", comment: "за комментарий в канале", meetup: "за приход на встречу", friend: "за приведённого друга", manual: "от Милы" };
+  // The bot's dictionary wins when the API sends it (`texts.level_names`, `texts.freeze_reasons`).
+  RM.adoptTexts = function (texts) {
+    if (!texts) return;
+    if (texts.level_names) Object.assign(RM.levelName, texts.level_names);
+    if (texts.freeze_reasons) Object.assign(RM.freezeReason, texts.freeze_reasons);
+  };
+  RM.levelLabel = function (level) { return RM.levelName[level || ""] || RM.levelName[""]; };
+  RM.spinner = function () { return '<div class="loading"><div class="spinner"></div></div>'; };
   RM.intentName = { take: "Берусь", try: "Попробую", skip: "В этот раз мимо" };
 
   RM.toast = function (text, ms) {
@@ -124,7 +132,7 @@
   // Telegram's own dialog inside the client, the browser's outside; resolves to true/false.
   RM.confirm = function (text) {
     return new Promise((resolve) => {
-      try { if (tg && tg.showConfirm) return tg.showConfirm(text, (ok) => resolve(!!ok)); } catch (e) { /* fall through */ }
+      try { if (tg && tg.showConfirm && tg.isVersionAtLeast && tg.isVersionAtLeast("6.2")) return tg.showConfirm(text, (ok) => resolve(!!ok)); } catch (e) { /* fall through */ }
       resolve(window.confirm(text));
     });
   };

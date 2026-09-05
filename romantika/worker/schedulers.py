@@ -12,12 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.domain.calendar import to_moscow
 from romantika.services import content, jobs, reminders
+from romantika.services.content import WeekDTO
 from romantika.texts import ru
 
 logger = logging.getLogger(__name__)
 
 #: (weekday, hour, slug, text builder) — Moscow time; «≥ hour» so that a restart catches up.
-SLOTS: list[tuple[int, int, str, Callable[[str], str]]] = [
+SLOTS: list[tuple[int, int, str, Callable[[WeekDTO], str]]] = [
     (3, 19, "thu", ru.reminder_thursday),
     (6, 12, "sun", ru.reminder_sunday),
 ]

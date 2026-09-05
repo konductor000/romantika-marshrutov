@@ -13,8 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.db import models
-from romantika.domain.types import StampLevel
-from romantika.services import achievements, content, facts, people, stamps, wishes, words
+from romantika.domain.types import Level, StampLevel, WeekState
+from romantika.services import achievements, content, facts, passport, people, stamps, wishes, words
 from romantika.services.content import SeasonDTO
 from romantika.services.facts import FactDTO
 from romantika.services.people import UserDTO
@@ -65,6 +65,10 @@ class JournalView:
     weeks_total: int = 0
     season_words: list[WeekWord] = field(default_factory=list)
     """Words of the weeks that have started, for the «Словарик сезона» block."""
+    level: Level | None = None
+    """The season status the passport shows (DOMAIN §4)."""
+    frozen_weeks: set[int] = field(default_factory=set)
+    """Weeks a freeze closed — shown as ❄️ in the PDF passport, not as a miss."""
 
 
 async def build(session: AsyncSession, *, season_id: int, user_id: int, today: date) -> JournalView:
@@ -93,10 +97,13 @@ async def build(session: AsyncSession, *, season_id: int, user_id: int, today: d
         for number, level in sorted(levels.items())
         if number in weeks and weeks[number].starts_on <= today
     ]
+    walk = await passport.build(session, season_id=season_id, user_id=user_id, today=today)
     return JournalView(
         user=await people.get_user(session, user_id),
         season=season,
         weeks=journal_weeks,
+        level=walk.level,
+        frozen_weeks={number for number, state in walk.breakdown.states.items() if state is WeekState.FROZEN},
         media=media,
         achievements=await achievements.labels(session, season_id=season_id, user_id=user_id),
         words=await words.for_user(session, season_id=season_id, user_id=user_id),

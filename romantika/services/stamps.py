@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.db import models
 from romantika.domain import rules
+from romantika.domain.calendar import to_moscow
 from romantika.domain.types import StampLevel
 from romantika.services import content, people
 
@@ -121,6 +122,10 @@ async def admin_set(
     week = await content.week_by_number(session, season_id, week_number)
     if week is None:
         raise content.ContentError(f"season {season_id} has no week {week_number}")
+    if level is not None and week.starts_on > to_moscow(now).date():
+        # The passport walk (rules.season_breakdown) only counts weeks that have started; a stamp
+        # here would show as «🔒 закрыта» and «⭐» at once.
+        raise content.ContentError(f"week {week_number} has not started yet")
     if level is not None:
         # A stamp implies participation: without the membership row every season-wide view
         # would count this person in the numerator and not in the denominator.
@@ -129,9 +134,11 @@ async def admin_set(
     row = await _row(session, user_id=user_id, week_id=week.id)
     before = None if row is None else {"level": row.level, "source": row.source}
 
+    cleared: list[int] = []
     if level is None:
         if row is None:
             return None
+        cleared = await _live_report_ids(session, user_id=user_id, week_id=week.id)
         await session.delete(row)
     elif row is None:
         session.add(
@@ -157,10 +164,47 @@ async def admin_set(
         entity="stamp",
         entity_id=f"{user_id}:{week.id}",
         before=before,
-        after=None if level is None else {"level": level.value, "source": models.StampSource.ADMIN.value},
+        after={"cleared_reports": cleared}
+        if level is None
+        else {"level": level.value, "source": models.StampSource.ADMIN.value},
     )
     await session.flush()
     return level
+
+
+async def cleared_reports(session: AsyncSession, *, user_id: int, week_id: int) -> set[int]:
+    """Ids of the reports Mila had in front of her when she last removed this week's stamp.
+
+    Editing or cancelling one of them must not bring the stamp back (that would undo her
+    decision), while a report sent later earns the week as usual.
+    """
+    query = (
+        select(models.AuditLog.after)
+        .where(
+            models.AuditLog.entity == "stamp",
+            models.AuditLog.entity_id == f"{user_id}:{week_id}",
+            models.AuditLog.action == "clear",
+        )
+        .order_by(models.AuditLog.id.desc())
+        .limit(1)
+    )
+    after = (await session.execute(query)).scalar_one_or_none()
+    return {int(rid) for rid in (after or {}).get("cleared_reports", [])}
+
+
+async def _live_report_ids(session: AsyncSession, *, user_id: int, week_id: int) -> list[int]:
+    query = select(models.Report.id).where(
+        models.Report.user_id == user_id, models.Report.week_id == week_id, models.Report.deleted_at.is_(None)
+    )
+    return [int(rid) for rid in (await session.execute(query)).scalars()]
+
+
+async def level_for_week(session: AsyncSession, *, user_id: int, week_id: int | None) -> StampLevel | None:
+    """The stamp one participant has for one week, if any."""
+    if week_id is None:
+        return None
+    row = await _row(session, user_id=user_id, week_id=week_id)
+    return None if row is None else StampLevel(row.level)
 
 
 async def for_user(session: AsyncSession, *, season_id: int, user_id: int) -> dict[int, StampLevel]:

@@ -294,7 +294,8 @@ async def test_draft_post_mentions_quotes_word_and_the_silent_ones(db_session: A
         db_session, season_id=season, user_id=ALICE, message=photo(caption="тако удались"), now=moscow(2026, 9, 2)
     )
     post = await summary.draft_post(db_session, season_id=season, week_number=1, today=date(2026, 9, 7))
-    assert "Черновик «Привала» · неделя 1 · За столом" in post
+    assert "Черновик «Привала» · неделя 1 · За столом" in post.as_message()
+    post = post.as_message()
     assert "⭐ Алиса — тако удались" in post
     assert "Слово недели: antojo" in post
     assert "#маршрут_итоги #мексика" in post

@@ -173,6 +173,7 @@ async def bot_api(token: str, method: str, request: Request) -> Response:
                 store.updates = pending
                 store.wake.clear()
                 return _ok(pending[:100])
+            store.wake.clear()
             try:
                 await asyncio.wait_for(store.wake.wait(), timeout=max(0.05, deadline - time.monotonic()))
             except TimeoutError:
@@ -211,8 +212,9 @@ async def bot_api(token: str, method: str, request: Request) -> Response:
             _attach(fields, key, key, files)
             if params.get("caption"):
                 fields["caption"] = params["caption"]
-        if params.get("reply_markup"):
-            fields["reply_markup"] = params["reply_markup"]
+        markup = params.get("reply_markup")
+        if isinstance(markup, dict) and "inline_keyboard" in markup:
+            fields["reply_markup"] = markup  # Telegram echoes inline keyboards only, never the reply one
         if params.get("reply_to_message_id") or params.get("reply_parameters"):
             fields["reply_to_message"] = {
                 "message_id": int(params.get("reply_to_message_id") or params["reply_parameters"]["message_id"]),
@@ -222,6 +224,11 @@ async def bot_api(token: str, method: str, request: Request) -> Response:
         message = _message(chat_id, **fields)
         store.sent.append({"method": method, "chat_id": chat_id, "message": message, "at": time.time()})
         return _ok(message)
+    if method == "copyMessage":
+        chat_id = int(params["chat_id"])
+        message = _message(chat_id, text=f"[copy of {params.get('from_chat_id')}/{params.get('message_id')}]")
+        store.sent.append({"method": method, "chat_id": chat_id, "message": message, "at": time.time()})
+        return _ok({"message_id": message["message_id"]})
     if method in {"editMessageText", "editMessageReplyMarkup", "editMessageCaption"}:
         chat_id = int(params.get("chat_id") or 0)
         message = {

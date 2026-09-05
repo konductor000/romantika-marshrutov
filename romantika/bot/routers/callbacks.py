@@ -155,7 +155,6 @@ async def _dispatch(
             already = cancelled.reason == "already_cancelled"
             await safe_send(bot, chat_id, ru.NOT_REPORT_ALREADY if already else ru.NOT_REPORT_FOREIGN)
             return
-        await safe_send(bot, chat_id, ru.NOT_REPORT_DONE, reply_markup=keyboards.main_keyboard(is_admin=is_admin))
         row = await session.get(models.Report, report_id)
         letter = await letters.create(
             session,
@@ -183,6 +182,7 @@ async def _dispatch(
                     letter_id=letter.id,
                     now=now,
                 )
+        await safe_send(bot, chat_id, ru.NOT_REPORT_DONE, reply_markup=keyboards.main_keyboard(is_admin=is_admin))
         return
 
     if head == "more" and len(parts) == 2:
@@ -250,7 +250,9 @@ async def handle_admin(
         await safe_send(
             bot,
             chat_id,
-            await summary.draft_post(session, season_id=season.id, week_number=current.number, today=today),
+            (
+                await summary.draft_post(session, season_id=season.id, week_number=current.number, today=today)
+            ).as_message(),
         )
     elif action == "summary":
         await admin.send_summary(bot, chat_id, session, season, None, today)

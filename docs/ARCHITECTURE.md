@@ -283,8 +283,19 @@ destination: Path)`, later stages add `send_message(chat_id, text)` and
   `PATCH /api/reports/{id}` (multipart `text`, `remove[]` media ids, `files[]`; allowed while
   the report's week is open — DOMAIN §2; recomputes the stamp, hides removed files, copies the
   new version to Mila, receipts the author; 403 foreign, 409 cancelled or week over, 413 over
-  10 files, 422 empty), `POST /api/reports/{id}/cancel`, `POST /api/weeks/{n}/level`,
-  `POST /api/intent`, `POST /api/letters`, `POST /api/words`, `POST /api/facts`.
+  10 files, 422 empty; an `edit_key` makes a retried PATCH idempotent), `POST
+  /api/reports/{id}/cancel`, `POST /api/weeks/{n}/level`, `POST /api/intent` (409 for a week
+  that has not started), `POST /api/letters`, `POST /api/words` (422 for a word the person
+  already has), `POST /api/facts`.
+- Multipart limits (`routes/api.py`): the request is refused with 413 from `Content-Length`
+  before parsing when it exceeds 200 MB; `request.form(max_files=11, max_fields=64)`; one file
+  ≤ 50 MB, 10 files per report, text ≤ 4000 characters (422); zero-size parts are skipped;
+  files stored before a failure are removed again. Submissions of one person are serialised
+  with `pg_advisory_xact_lock(hashtext(user_id:client_id))`. A service `ValueError` answers
+  422 `{"detail": …}` (handler in `web/app.py`).
+- `GET /media/{id}` sends only images, video and audio inline (`INLINE_TYPES`); anything else
+  goes out as `application/octet-stream` with `Content-Disposition: attachment`, always with
+  `X-Content-Type-Options: nosniff`. Hidden media are 404 for the owner but still open for Mila.
 - Letters: everything sent to Mila that is not a report — «Написать Миле» (bot or app),
   a message between weeks, a report taken back — is a `letters` row (`source` bot | app |
   out_of_week | not_report) with `reply_text/replied_at`; the admin copy's `admin_links` row
@@ -299,9 +310,12 @@ destination: Path)`, later stages add `send_message(chat_id, text)` and
   `PUT /api/admin/participants/{id}/stamps/{week}`, `POST .../freezes`, `POST .../achievements`,
   `PUT .../wish`, `POST .../message`, `GET /api/admin/summary?week=` (+ `week_ended`),
   `POST /api/admin/remind` body `{week_number?}` (404 unknown week, 409 past week),
-  `GET /api/admin/letters` → `{unanswered, letters[]}`, `POST /api/admin/letters/{id}/reply`,
-  `GET/PUT /api/admin/reminders`, `GET /api/admin/audit`. `GET /api/admin/participants` also
-  carries `week_intent` / `week_level` for the current week (the people filters).
+  `GET /api/admin/letters` → `{unanswered, letters[]}` (each letter with the `media` of the
+  report it came from), `POST /api/admin/letters/{id}/reply`, `GET/PUT /api/admin/reminders`,
+  `GET /api/admin/audit` (rows carry `actor_name`). `GET /api/admin/participants` also
+  carries `week_intent` / `week_level` for the current week (the people filters). Stamps,
+  freezes and achievements given from the admin app notify the participant through
+  `telegram_notify`; a stamp or a reminder for a week that has not started is 409.
 - Admin = `user.is_admin or user.id in settings.admin_ids`.
 - Front-end: vanilla JS modules in `romantika/web/static/`, Telegram `telegram-web-app.js`
   from `https://telegram.org/js/telegram-web-app.js`; `tg.expand()`; works in a plain browser

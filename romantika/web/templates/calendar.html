@@ -3,8 +3,8 @@
 {% block body_class %}night{% endblock %}
 {% block content %}
 <header class="hero">
-  <p class="eyebrow">Романтика маршрутов · Мексика</p>
-  <h1>Каким днём вы родились?</h1>
+  <p class="eyebrow">Романтика маршрутов{% if season %} · {{ season.title }}{% endif %}</p>
+  <h1>В какой день ты родился?</h1>
   <p class="muted">Цолькин — священный календарь майя на 260 дней: 13 чисел и 20 знаков. Этот счёт в Гватемале ведут непрерывно до сих пор.</p>
 </header>
 
@@ -19,9 +19,9 @@
     <label>День <select name="d" id="d"></select></label>
     <label>Месяц <select name="m" id="m"></select></label>
     <label>Год <select name="y" id="y"></select></label>
-    <button type="submit" class="btn">Спросить жреца</button>
+    <button type="submit" class="btn">Узнать свой день</button>
   </form>
-  <p class="note">Сами дни настоящие: дата считается по общепринятой корреляции GMT. А вот расшифровки предназначений дописаны уже в наше время — так что это развлечение, а не пророчество.</p>
+  <p class="note">Счёт дней настоящий — тот же, которым пользуются исследователи майя. А вот толкования дописаны уже в наше время, так что это игра, а не пророчество.</p>
   <div id="result" class="result" hidden></div>
 </section>
 

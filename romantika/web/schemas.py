@@ -2,10 +2,29 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
-from typing import Literal
+from datetime import UTC, date, datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer
+
+
+def _non_blank(value: str) -> str:
+    """Whitespace is not a text: a letter, a wish or a word made of spaces is refused (422)."""
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("пустой текст")
+    return stripped
+
+
+def _utc_iso(value: datetime) -> str:
+    """Every timestamp leaves the API as UTC with `Z`, whatever clock produced it."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+NonBlank = Annotated[str, AfterValidator(_non_blank)]
+UtcDateTime = Annotated[datetime, PlainSerializer(_utc_iso, return_type=str)]
 
 
 class Me(BaseModel):
@@ -68,9 +87,9 @@ class ReportOut(BaseModel):
     kind: str
     level: str
     text: str | None
-    created_at: datetime
+    created_at: UtcDateTime
     media: list[MediaOut]
-    edited_at: datetime | None = None
+    edited_at: UtcDateTime | None = None
     editable: bool = False
     """True while the report's week is open: text and files may still be changed (DOMAIN §2)."""
 
@@ -129,7 +148,7 @@ class ParticipantOut(BaseModel):
     first_name: str | None
     last_name: str | None
     username: str | None
-    joined_at: datetime
+    joined_at: UtcDateTime
     stamps: int
     stamps_max: int
     level: str | None
@@ -172,7 +191,7 @@ class FreezeOut(BaseModel):
 
 
 class AchievementGrant(BaseModel):
-    code_or_text: str = Field(min_length=1, max_length=64)
+    code_or_text: NonBlank = Field(min_length=1, max_length=64)
 
 
 class AchievementOut(BaseModel):
@@ -182,11 +201,11 @@ class AchievementOut(BaseModel):
 
 
 class WishSet(BaseModel):
-    text: str = Field(min_length=1, max_length=2000)
+    text: NonBlank = Field(min_length=1, max_length=2000)
 
 
 class FactCreate(BaseModel):
-    text: str = Field(min_length=1, max_length=2000)
+    text: NonBlank = Field(min_length=1, max_length=2000)
     week_number: int | None = None
 
 
@@ -196,7 +215,7 @@ class FactOut(BaseModel):
     author_id: int | None
     author_name: str | None
     week_id: int | None
-    created_at: datetime
+    created_at: UtcDateTime
 
 
 class SubmittedOut(BaseModel):
@@ -218,6 +237,8 @@ class SummaryOut(BaseModel):
     core_best: int
     core_current: int
     draft_post: str
+    draft_notes: list[str] = []
+    """Service remarks next to the draft (who went silent, the week is still running) — not part of the post."""
     week_ended: bool = False
     """True once the week's last day is behind: no reminder can be sent about it (D1)."""
 
@@ -225,12 +246,13 @@ class SummaryOut(BaseModel):
 class AuditOut(BaseModel):
     id: int
     actor_id: int | None
+    actor_name: str | None = None
     action: str
     entity: str
     entity_id: str | None
     before: dict[str, object] | None
     after: dict[str, object] | None
-    created_at: datetime
+    created_at: UtcDateTime
 
 
 class AchievementTypeOut(BaseModel):
@@ -287,6 +309,10 @@ class TextsOut(BaseModel):
     word_prompt: str
     fact_prompt: str
     journal_now: str
+    level_names: dict[str, str] = {}
+    """`{level: name}` with `""` for «ещё в пути» — one source with the bot (DOMAIN §4)."""
+    freeze_reasons: dict[str, str] = {}
+    """`{reason: label}` for the passport's «Заработано: …» line."""
 
 
 class LinksOut(BaseModel):
@@ -353,7 +379,7 @@ class ReportEditOut(BaseModel):
 
 
 class TextIn(BaseModel):
-    text: str = Field(min_length=1, max_length=4000)
+    text: NonBlank = Field(min_length=1, max_length=4000)
 
 
 class MessageOut(BaseModel):
@@ -386,7 +412,7 @@ class FactItem(BaseModel):
     text: str
     author: str | None
     mine: bool
-    created_at: datetime
+    created_at: UtcDateTime
 
 
 class FactsOut(BaseModel):
@@ -412,10 +438,12 @@ class LetterOut(BaseModel):
     author: str
     source: Literal["bot", "app", "out_of_week", "not_report"]
     text: str
-    created_at: datetime
+    created_at: UtcDateTime
     reply_text: str | None
-    replied_at: datetime | None
+    replied_at: UtcDateTime | None
     report_id: int | None
+    media: list[MediaOut] = []
+    """Files of the report this letter came from (a message between weeks can be a photo)."""
 
 
 class LettersOut(BaseModel):

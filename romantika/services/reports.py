@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,7 +123,9 @@ async def accept(
     await session.flush()
 
     media_rows: list[models.Media] = []
-    for item in message.files:
+    # Files of one message share `now`; a microsecond per file keeps the order they were sent in
+    # (the journal, the editor and the PDF all sort media by `created_at`).
+    for position, item in enumerate(message.files):
         row = models.Media(
             report_id=report.id,
             tg_file_id=item.file_id,
@@ -137,7 +139,7 @@ async def accept(
                 user_id=user_id,
                 suffix=media.suffix_for(kind=item.kind, mime=item.mime),
             ),
-            created_at=now,
+            created_at=now + timedelta(microseconds=position),
         )
         session.add(row)
         media_rows.append(row)
@@ -272,13 +274,21 @@ async def _recompute_stamp(
         return Recomputed(level=StampLevel(stamp.level), upgraded_to_max=False)
 
     levels = await _remaining_levels(session, user_id=user_id, week_id=week_id)
+    if stamp is None:
+        # Mila took the stamp away after seeing these reports: editing them does not bring it
+        # back. Only a report sent after her decision can earn the week again.
+        levels = {
+            rid: level
+            for rid, level in levels.items()
+            if rid not in await stamps.cleared_reports(session, user_id=user_id, week_id=week_id)
+        }
     if not levels:
         if stamp is not None:
             await session.delete(stamp)
             await session.flush()
         return Recomputed(level=None, upgraded_to_max=False)
 
-    level = StampLevel.MAX if StampLevel.MAX in levels else StampLevel.MIN
+    level = StampLevel.MAX if StampLevel.MAX in levels.values() else StampLevel.MIN
     if stamp is None:
         week = await session.get(models.Week, week_id)
         merged = await stamps.merge(
@@ -338,6 +348,7 @@ async def edit(
     new_files: list[IncomingFile],
     remove_media_ids: list[uuid.UUID],
     now: datetime,
+    edit_key: str | None = None,
 ) -> EditResult:
     """Change the text and the files of one's own report while its week is open.
 
@@ -358,29 +369,46 @@ async def edit(
     season = await content.require_season(session, report.season_id)
     body = (text or "").strip() or None
     text_changed = body != (report.text or None)
-    if text_changed:
-        content.audit(
-            session,
-            actor_id=user_id,
-            action="edit",
-            entity="report",
-            entity_id=str(report.id),
-            before={"text": report.text},
-            after={"text": body},
-        )
-        report.text = body
 
-    media_query = select(models.Media).where(models.Media.report_id == report.id, models.Media.hidden_at.is_(None))
+    media_query = (
+        select(models.Media)
+        .where(models.Media.report_id == report.id, models.Media.hidden_at.is_(None))
+        .order_by(models.Media.created_at, models.Media.id)
+    )
     live_media = list((await session.execute(media_query)).scalars())
+    to_remove = set(remove_media_ids)
+    kept = [row for row in live_media if row.id not in to_remove]
+    if not body and not kept and not new_files:
+        # Nothing would be left — refuse before anything is written.
+        return EditResult(ok=False, reason=EMPTY)
+
+    content.audit(
+        session,
+        actor_id=user_id,
+        action="edit",
+        entity="report",
+        entity_id=str(report.id),
+        before={"text": report.text},
+        after={
+            "text": body,
+            "edit_key": edit_key,
+            "added": len(new_files),
+            "removed": len(live_media) - len(kept),
+        },
+    )
+    report.text = body
     removed = 0
     for row in live_media:
-        if row.id in set(remove_media_ids):
+        if row.id in to_remove:
             row.hidden_at = now
             removed += 1
-    kept = [row for row in live_media if row.hidden_at is None]
 
+    # New files go after everything the report already has, whatever the clock says (a retry or
+    # a frozen test clock can hand two edits the same `now`).
+    latest = max((row.created_at for row in live_media), default=now)
+    first_at = now if now > latest else latest + timedelta(microseconds=1)
     new_rows: list[models.Media] = []
-    for item in new_files:
+    for position, item in enumerate(new_files):
         row = models.Media(
             report_id=report.id,
             tg_file_id=item.file_id,
@@ -394,16 +422,12 @@ async def edit(
                 user_id=user_id,
                 suffix=media.suffix_for(kind=item.kind, mime=item.mime),
             ),
-            created_at=now,
+            created_at=first_at + timedelta(microseconds=position),
         )
         session.add(row)
         new_rows.append(row)
     if new_rows:
         await session.flush()
-
-    if not body and not kept and not new_rows:
-        # Nothing would be left: refuse, and let the transaction roll the hidings back.
-        return EditResult(ok=False, reason=EMPTY)
 
     kinds = [media.kind_for_mime(row.mime) for row in kept] + [item.kind for item in new_files]
     kind = kinds[0] if kinds else ReportKind.TEXT
@@ -437,6 +461,17 @@ async def edit(
     )
 
 
+async def edit_applied(session: AsyncSession, *, report_id: int, edit_key: str) -> bool:
+    """Whether an edit with this key was already applied to the report (a retried PATCH)."""
+    query = select(models.AuditLog.id).where(
+        models.AuditLog.entity == "report",
+        models.AuditLog.entity_id == str(report_id),
+        models.AuditLog.action == "edit",
+        models.AuditLog.after["edit_key"].astext == edit_key,
+    )
+    return (await session.execute(query)).first() is not None
+
+
 async def find_by_client_id(session: AsyncSession, *, user_id: int, client_id: str) -> models.Report | None:
     """The report a Mini App submission already created, when the client retries it."""
     query = select(models.Report).where(models.Report.user_id == user_id, models.Report.client_id == client_id)
@@ -462,10 +497,11 @@ async def _has_report(session: AsyncSession, *, user_id: int, week_id: int) -> b
     return (await session.execute(query.limit(1))).first() is not None
 
 
-async def _remaining_levels(session: AsyncSession, *, user_id: int, week_id: int) -> set[StampLevel]:
-    query = select(models.Report.level).where(
+async def _remaining_levels(session: AsyncSession, *, user_id: int, week_id: int) -> dict[int, StampLevel]:
+    """`{report_id: level}` of the live reports of one week."""
+    query = select(models.Report.id, models.Report.level).where(
         models.Report.user_id == user_id,
         models.Report.week_id == week_id,
         models.Report.deleted_at.is_(None),
     )
-    return {StampLevel(level) for level in (await session.execute(query)).scalars()}
+    return {rid: StampLevel(level) for rid, level in (await session.execute(query)).tuples().all()}

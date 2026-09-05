@@ -64,7 +64,8 @@ async def edit_week(
     try:
         week = await content.update_week(session, actor_id=admin.user.id, week_id=week_id, changes=changes, today=today)
     except content.ContentError as exc:
-        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        code = status.HTTP_404_NOT_FOUND if "does not exist" in str(exc) else status.HTTP_409_CONFLICT
+        raise HTTPException(code, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     return _admin_week(week, today)
@@ -185,13 +186,20 @@ async def set_stamp(
             now=now,
         )
     except content.ContentError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+        code = status.HTTP_409_CONFLICT if "not started" in str(exc) else status.HTTP_404_NOT_FOUND
+        raise HTTPException(code, str(exc)) from exc
     return schemas.StampOut(level=level.value if level else None)
 
 
 @router.post("/participants/{user_id}/freezes", response_model=schemas.FreezeOut, status_code=status.HTTP_201_CREATED)
 async def grant_freeze(
-    user_id: int, body: schemas.FreezeGrant, admin: AdminDep, session: SessionDep, season: SeasonDep, now: NowDep
+    user_id: int,
+    body: schemas.FreezeGrant,
+    admin: AdminDep,
+    session: SessionDep,
+    season: SeasonDep,
+    now: NowDep,
+    response: Response,
 ) -> schemas.FreezeOut:
     await _require_member(session, season, user_id, now)
     granted = await freezes.grant(
@@ -203,6 +211,10 @@ async def grant_freeze(
         now=now,
         note=body.note,
     )
+    if granted and user_id != admin.user.id:
+        await notify.enqueue_message(session, chat_id=user_id, text=ru.freeze_given(body.reason), now=now)
+    else:
+        response.status_code = status.HTTP_200_OK  # nothing new was created (the cap, or Mila herself)
     return schemas.FreezeOut(granted=granted, freezes_total=await freezes.total(session, season.id, user_id))
 
 
@@ -210,12 +222,22 @@ async def grant_freeze(
     "/participants/{user_id}/achievements", response_model=schemas.AchievementOut, status_code=status.HTTP_201_CREATED
 )
 async def grant_achievement(
-    user_id: int, body: schemas.AchievementGrant, admin: AdminDep, session: SessionDep, season: SeasonDep, now: NowDep
+    user_id: int,
+    body: schemas.AchievementGrant,
+    admin: AdminDep,
+    session: SessionDep,
+    season: SeasonDep,
+    now: NowDep,
+    response: Response,
 ) -> schemas.AchievementOut:
     await _require_member(session, season, user_id, now)
     result = await achievements.award(
         session, season_id=season.id, user_id=user_id, code_or_text=body.code_or_text, awarded_by=admin.user.id, now=now
     )
+    if result.created and user_id != admin.user.id:
+        await notify.enqueue_message(session, chat_id=user_id, text=ru.achievement_given(result.label), now=now)
+    if not result.created:
+        response.status_code = status.HTTP_200_OK
     return schemas.AchievementOut(code=result.code, label=result.label, created=result.created)
 
 
@@ -263,7 +285,8 @@ async def week_summary(
         took_not_submitted_names=[names.get(u, str(u)) for u in report.took_not_submitted],
         core_best=report.core_best,
         core_current=report.core_current,
-        draft_post=draft,
+        draft_post=draft.text,
+        draft_notes=draft.notes,
     )
 
 
@@ -312,10 +335,13 @@ async def delete_fact(fact_id: int, admin: AdminDep, session: SessionDep, now: N
 @router.get("/audit", response_model=list[schemas.AuditOut])
 async def audit(_: AdminDep, session: SessionDep, limit: int = 100) -> list[schemas.AuditOut]:
     query = select(models.AuditLog).order_by(models.AuditLog.id.desc()).limit(min(max(limit, 1), 500))
+    rows = list((await session.execute(query)).scalars())
+    names = await people.display_names(session, [row.actor_id for row in rows if row.actor_id], short=True)
     return [
         schemas.AuditOut(
             id=row.id,
             actor_id=row.actor_id,
+            actor_name=names.get(row.actor_id) if row.actor_id else None,
             action=row.action,
             entity=row.entity,
             entity_id=row.entity_id,
@@ -323,7 +349,7 @@ async def audit(_: AdminDep, session: SessionDep, limit: int = 100) -> list[sche
             after=row.after,
             created_at=row.created_at,
         )
-        for row in (await session.execute(query)).scalars()
+        for row in rows
     ]
 
 
@@ -358,6 +384,8 @@ async def remind_now(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "no such week")
         if week.ends_on < views.moscow_today(now):
             raise HTTPException(status.HTTP_409_CONFLICT, "неделя уже прошла — напоминать не о чем")
+        if week.starts_on > views.moscow_today(now):
+            raise HTTPException(status.HTTP_409_CONFLICT, "неделя ещё не началась — задание пока никто не видел")
     job_id = await notify.enqueue_reminders_now(
         session, season_id=season.id, requested_by=admin.user.id, now=now, week_number=week_number
     )
@@ -371,6 +399,7 @@ async def remind_now(
 async def list_letters(_: AdminDep, session: SessionDep, season: SeasonDep) -> schemas.LettersOut:
     listed = await letters.list_for_season(session, season.id)
     names = await people.display_names(session, [item.user_id for item in listed])
+    media = await views.media_by_report(session, [item.report_id for item in listed if item.report_id])
     return schemas.LettersOut(
         unanswered=await letters.unanswered_count(session, season.id),
         letters=[
@@ -384,6 +413,7 @@ async def list_letters(_: AdminDep, session: SessionDep, season: SeasonDep) -> s
                 reply_text=item.reply_text,
                 replied_at=item.replied_at,
                 report_id=item.report_id,
+                media=media.get(item.report_id or -1, []),
             )
             for item in listed
         ],
@@ -400,7 +430,9 @@ async def reply_to_letter(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no such letter")
     text = body.text.strip()
     await letters.mark_replied(session, letter_id, reply_text=text, replied_by=admin.user.id, now=now)
-    job_id = await notify.enqueue_message(session, chat_id=letter.user_id, text=ru.reply_to_author(text), now=now)
+    job_id = await notify.enqueue_message(
+        session, chat_id=letter.user_id, text=ru.reply_to_author(text, about="letter"), now=now
+    )
     return schemas.QueuedOut(job_id=job_id)
 
 
@@ -410,5 +442,7 @@ async def message_participant(
 ) -> schemas.QueuedOut:
     """A reply to a participant from the admin app — delivered as «Мила ответила…» in the bot."""
     await _require_member(session, season, user_id, now)
-    job_id = await notify.enqueue_message(session, chat_id=user_id, text=ru.reply_to_author(body.text.strip()), now=now)
+    job_id = await notify.enqueue_message(
+        session, chat_id=user_id, text=ru.reply_to_author(body.text.strip(), about="message"), now=now
+    )
     return schemas.QueuedOut(job_id=job_id)

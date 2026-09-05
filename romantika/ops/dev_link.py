@@ -1,4 +1,4 @@
-"""`python -m romantika.ops.dev_link --user 1001 --name Алиса [--admin]` — a signed Mini App link.
+"""`python -m romantika.ops.dev_link --user 1001 --name Алиса` — a signed Mini App link (ENV=dev only).
 
 Prints the `initData` the API trusts (signed with BOT_TOKEN) as a URL with `?init=` and as the
 header value, so a browser or an agent can act as that participant on the local stand.
@@ -22,6 +22,8 @@ def main() -> None:
     parser.add_argument("--path", default="/app", help="/app, /app/journal, /app/admin …")
     args = parser.parse_args()
     settings = get_settings()
+    if settings.env != "dev":
+        raise SystemExit("dev_link signs with BOT_TOKEN — refuse to run outside ENV=dev")
     user: dict[str, object] = {"id": args.user, "first_name": args.name}
     if args.username:
         user["username"] = args.username

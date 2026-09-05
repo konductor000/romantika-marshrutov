@@ -75,6 +75,13 @@ async def create(
     return _dto(row)
 
 
+async def for_report(session: AsyncSession, report_id: int) -> LetterDTO | None:
+    """The letter a report already became (sent outside a week, or taken back)."""
+    query = select(models.Letter).where(models.Letter.report_id == report_id).order_by(models.Letter.id).limit(1)
+    row = (await session.execute(query)).scalar_one_or_none()
+    return None if row is None else _dto(row)
+
+
 async def get(session: AsyncSession, letter_id: int) -> LetterDTO | None:
     row = await session.get(models.Letter, letter_id)
     return None if row is None else _dto(row)

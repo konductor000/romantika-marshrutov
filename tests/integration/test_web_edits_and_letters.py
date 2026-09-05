@@ -68,7 +68,7 @@ async def test_edit_changes_text_adds_a_photo_and_earns_the_star(app: App) -> No
     assert "обновила" in receipt.payload["text"]
     audit = (await app.session.execute(select(models.AuditLog).where(models.AuditLog.action == "edit"))).scalar_one()
     assert audit.actor_id == ALICE and audit.entity_id == str(report_id)
-    assert audit.before == {"text": "раз"} and audit.after == {"text": "раз, и вот фото"}
+    assert audit.before == {"text": "раз"} and audit.after["text"] == "раз, и вот фото" and audit.after["added"] == 1
 
 
 async def test_removing_the_only_photo_recomputes_the_stamp_down(app: App) -> None:
@@ -214,9 +214,11 @@ async def test_remind_now_carries_the_week_and_refuses_unknown_or_past_weeks(app
     admin = app.headers(ADMIN_ID, "Мила")
     assert (await app.client.post("/api/admin/remind", json={"week_number": 99}, headers=admin)).status_code == 404
     r = await app.client.post("/api/admin/remind", json={"week_number": 2}, headers=admin)
+    assert r.status_code == 409 and "не началась" in r.json()["detail"], "a week nobody has seen yet"
+    r = await app.client.post("/api/admin/remind", json={"week_number": 1}, headers=admin)
     assert r.status_code == 202
     (job,) = await app.jobs("reminders_now")
-    assert job.payload["week_number"] == 2 and job.payload["requested_by"] == ADMIN_ID
+    assert job.payload["week_number"] == 1 and job.payload["requested_by"] == ADMIN_ID
     week = await content.week_by_number(app.session, app.season_id, 2)
     assert week is not None
     row = await app.session.get(models.Week, week.id)

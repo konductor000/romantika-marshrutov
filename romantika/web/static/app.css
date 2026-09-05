@@ -154,7 +154,8 @@ dd { margin: 0; }
 .stamp.min { background: var(--ok-soft); border-color: var(--ok); }
 .stamp.frozen { background: var(--ice-soft); border-color: var(--ice); }
 .stamp.current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-.stamp.locked, .stamp.before_join { opacity: 0.55; }
+.stamp.locked, .stamp.before_join { opacity: 0.7; }
+.stamp.locked .n, .stamp.locked .t, .stamp.before_join .n, .stamp.before_join .t { color: var(--ink); opacity: 0.75; }
 .stamp.missed { opacity: 0.8; }
 
 /* --- buttons and forms --- */
@@ -197,9 +198,9 @@ select { appearance: none; -webkit-appearance: none; }
 .report .meta { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
 .report .text { white-space: pre-wrap; }
 .report img, .report video { display: block; max-width: 100%; border-radius: 10px; margin-top: 8px; }
-.report .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin-top: 8px; }
-.report .gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; margin: 0; }
-.report .gallery a { display: block; }
+.report .gallery, .letter .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin-top: 8px; }
+.report .gallery img, .letter .gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; margin: 0; }
+.report .gallery a, .letter .gallery a { display: block; }
 .report .edited, .meta .edited { color: var(--accent); }
 .previews button.pv { border: 2px solid transparent; font: inherit; cursor: pointer; color: var(--muted); }
 .previews .pv.keep { border-color: var(--ok); }
@@ -208,7 +209,8 @@ select { appearance: none; -webkit-appearance: none; }
 .previews .pv.removed .x { background: var(--accent); }
 a.linkcard { display: block; color: inherit; text-decoration: none; }
 a.linkcard:active { background: var(--accent-soft); }
-.tabs.filters { margin: 10px 0 6px; }
+.tabs.filters { margin: 10px 0 6px; flex-wrap: wrap; overflow: visible; }
+a.linkcard .chevron { flex: none; margin-left: 8px; font-size: 20px; line-height: 1; }
 .stampbar button.picked { outline: 2px solid var(--accent); outline-offset: 1px; }
 .letter { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 12px; padding: 12px; margin: 0 0 10px; }
 .letter.answered { border-left-color: var(--ok); }

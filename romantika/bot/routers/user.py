@@ -124,7 +124,7 @@ async def handle_text(
         return
 
     if action == "start":
-        await safe_send(bot, chat_id, ru.greeting(season), reply_markup=keyboard)
+        await safe_send(bot, chat_id, ru.greeting(season) + ru.GREETING_CTA, reply_markup=keyboard)
     elif action == "help":
         await safe_send(bot, chat_id, ru.HELP, reply_markup=keyboard)
         if is_admin:
@@ -192,11 +192,10 @@ async def answer_dialog(
         await safe_send(
             bot, chat_id, ru.WORD_SAVED + (ru.WORD_FREEZE_BONUS if result.freeze_granted else ""), reply_markup=keyboard
         )
-        await common.notify_admin(bot, admin_chat, user, f"📖 {ru.escape(author)} добавил слово: {ru.escape(text)}")
+        await common.notify_admin(bot, admin_chat, user, ru.admin_word_added(author, text))
         return
 
     if dialog.state == "letter":
-        await safe_send(bot, chat_id, ru.LETTER_SENT, reply_markup=keyboard)
         letter = await letters.create(
             session,
             season_id=season.id if season else None,
@@ -218,6 +217,7 @@ async def answer_dialog(
                     letter_id=letter.id,
                     now=now,
                 )
+        await safe_send(bot, chat_id, ru.LETTER_SENT, reply_markup=keyboard)
         return
 
     if dialog.state == "fact":
@@ -243,7 +243,7 @@ async def answer_dialog(
             )
         else:
             await safe_send(bot, chat_id, ru.FACT_SAVED, reply_markup=keyboard)
-            await common.notify_admin(bot, admin_chat, user, f"💡 {ru.escape(author)} добавил факт: {ru.escape(text)}")
+            await common.notify_admin(bot, admin_chat, user, ru.admin_fact_added(author, text))
         return
 
     if dialog.state == "edit" and is_admin and season is not None:

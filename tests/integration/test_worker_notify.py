@@ -182,8 +182,10 @@ async def test_season_end_queues_one_journal_per_stamped_participant(db_session:
     gateway = FakeGateway()
     now = moscow(2026, 11, 19, 12)
     assert await run_once(factory, telegram=gateway, media_store=MediaStore(tmp_path), now=now) == "season_journals"
-    assert len(gateway.texts) == 1 and gateway.texts[0][0] == ADMIN_ID
-    assert "закончился — собираю журналы: 1 человек" in gateway.texts[0][1]
+    assert gateway.texts == [], "Mila's note is queued, not sent from inside the transaction"
+    notes = list((await db_session.execute(select(models.Job).where(models.Job.kind == "telegram_notify"))).scalars())
+    assert len(notes) == 1 and notes[0].payload["chat_id"] == ADMIN_ID
+    assert "закончился — собираю журналы: 1 человек" in notes[0].payload["text"]
     queued = list((await db_session.execute(select(models.Job).where(models.Job.kind == "journal_pdf"))).scalars())
     assert [(j.payload["user_id"], j.payload["chat_id"], j.payload["requested_via"]) for j in queued] == [
         (ALICE, ALICE, "season_end")

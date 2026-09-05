@@ -6,8 +6,8 @@
 <style>
   @page {
     size: A4; margin: 20mm 18mm 22mm;
-    @bottom-left { content: "Романтика маршрутов · {{ season.title }}"; font: 8.5pt "DejaVu Sans", "Helvetica Neue", Arial, sans-serif; color: #8a8178; }
-    @bottom-right { content: "{{ name }} · " counter(page); font: 8.5pt "DejaVu Sans", "Helvetica Neue", Arial, sans-serif; color: #8a8178; }
+    @bottom-left { content: "Романтика маршрутов · " {{ season_css }}; font: 8.5pt "DejaVu Sans", "Helvetica Neue", Arial, sans-serif; color: #8a8178; }
+    @bottom-right { content: {{ name_css }} " · " counter(page); font: 8.5pt "DejaVu Sans", "Helvetica Neue", Arial, sans-serif; color: #8a8178; }
   }
   @page :first { @bottom-left { content: none; } @bottom-right { content: none; } }
   :root { --ink: #23201c; --muted: #7a7268; --accent: #c8451f; --paper: #f8f3ea; --line: #e6ddd0; --star: #b8860b; --ok: #2f8f5b; }
@@ -36,7 +36,8 @@
   .cell { width: 74pt; height: 74pt; border: 1px solid var(--line); border-radius: 8pt; padding: 6pt 7pt; position: relative; }
   .cell .num { font-size: 8pt; color: var(--muted); }
   .cell .mark { position: absolute; right: 7pt; top: 4pt; font-size: 15pt; line-height: 1; }
-  .cell.star .mark { color: var(--star); } .cell.ok .mark { color: var(--ok); }
+  .cell.star .mark { color: var(--star); } .cell.ok .mark { color: var(--ok); } .cell.frozen .mark { color: #4a7fb5; }
+  .cell.frozen { background: #eef4fa; border-color: #cfdcea; }
   .cell .ttl { position: absolute; left: 7pt; right: 7pt; bottom: 6pt; font-size: 7.5pt; line-height: 1.2; color: var(--ink); overflow: hidden; max-height: 28pt; }
   .cell.empty { background: repeating-linear-gradient(135deg, #fbf8f2 0 4pt, #f3ede3 4pt 8pt); border-style: dashed; }
   .legend { font-size: 8.5pt; color: var(--muted); margin: 8pt 0 0; }
@@ -46,6 +47,7 @@
   .week { page-break-inside: avoid; margin: 0 0 18pt; padding: 0 0 14pt; border-bottom: 1px solid var(--line); }
   .week:last-of-type { border-bottom: 0; }
   .week .head { display: flex; align-items: baseline; gap: 8pt; }
+  .week .head h2 { flex: 1; min-width: 0; font-size: 17pt; }
   .week .badge { flex: none; width: 22pt; height: 22pt; border-radius: 50%; text-align: center; line-height: 22pt; font-size: 12pt; color: #fff; background: var(--ok); }
   .week .badge.star { background: var(--star); }
   .week .dates { color: var(--muted); font-size: 9pt; margin: 0 0 6pt 30pt; }
@@ -80,16 +82,16 @@
   <p class="dates">{{ starts }} — {{ ends }}{% if level_name %} · {{ level_name }}{% endif %}</p>
 
   <div class="totals">
-    <div class="t"><div class="n">{{ view.weeks|length }} <small>/ {{ view.weeks_total }}</small></div><div class="l">недель со штампом</div></div>
-    <div class="t"><div class="n">{{ stars }}</div><div class="l">со звёздочкой</div></div>
-    <div class="t"><div class="n">{{ photos_total }}</div><div class="l">фотографий</div></div>
+    <div class="t"><div class="n">{{ view.weeks|length }} <small>/ {{ view.weeks_total }}</small></div><div class="l">{{ weeks_label }}</div></div>
+    <div class="t"><div class="n">{{ stars }}</div><div class="l">{{ stars_label }}</div></div>
+    <div class="t"><div class="n">{{ photos_total }}</div><div class="l">{{ photos_label }}</div></div>
   </div>
 
   <h3>Паспорт сезона</h3>
   <div class="spread">
     {% for cell in grid %}<div class="cell {{ cell.state }}"><span class="num">{{ cell.number }}</span>{% if cell.mark %}<span class="mark">{{ cell.mark }}</span>{% endif %}{% if cell.title %}<span class="ttl">{{ cell.title }}</span>{% endif %}</div>{% endfor %}
   </div>
-  <p class="legend">★ максимум — задание на вечер · ✓ минимум — задание на пять минут · пустая клетка — неделя прошла мимо или закрыта заморозкой</p>
+  <p class="legend">★ максимум — задание на вечер · ✓ минимум — задание на пять минут{% if frozen %} · ❄ неделя закрыта заморозкой{% endif %} · пустая клетка — неделя прошла мимо</p>
   {% if level_note %}<p class="small muted">Статус «{{ level_name }}»: {{ level_note }}.</p>{% endif %}
 
   <p class="promise">Это не сертификат об окончании. Это чтобы было видно: три месяца прожиты, а не пролистаны.</p>
@@ -101,11 +103,11 @@
     {% for card in cards %}
     <div class="week">
       <div class="head"><span class="badge {{ 'star' if card.star }}">{{ '★' if card.star else '✓' }}</span><h2>Неделя {{ card.number }} · {{ card.title }}</h2></div>
-      <p class="dates">{{ card.dates }}{% if card.star %} · максимум{% else %} · минимум{% endif %}</p>
+      <p class="dates">{{ card.dates }}</p>
       {% for text in card.texts %}<div class="entry">{{ text }}</div>{% endfor %}
-      {% if not card.texts and not card.photos %}<p class="entry empty">Отчёт был без слов — фото или файл.</p>{% endif %}
+      {% if not card.texts and not card.photos %}<p class="entry empty">Без слов: в этот раз только {{ 'фото или видео' if card.star else 'файл' }}.</p>{% endif %}
       {% if card.photos %}<div class="photos">{% for src in card.photos %}<img src="{{ src }}" alt="">{% endfor %}</div>{% endif %}
-      {% if card.files_more %}<p class="more">Ещё {{ card.files_more }} файл(ов) остались в приложении: видео и то, что не поместилось.</p>{% endif %}
+      {% if card.files_more %}<p class="more">{{ card.files_more_label }} в приложении: видео и то, что сюда не поместилось.</p>{% endif %}
     </div>
     {% endfor %}
   {% else %}
@@ -125,7 +127,7 @@
 <section class="section">
   <p class="eyebrow">Словарик сезона</p>
   {% if view.season_words %}
-  <h3>Слова недель</h3>
+  <h3>Слова недели</h3>
   <ul class="words">{% for w in view.season_words %}<li><b>{{ w.word }}</b>{% if w.word_ru %} <span class="muted">· {{ w.word_ru }}</span>{% endif %}{% if w.meaning %}<br>{{ w.meaning }}{% endif %}</li>{% endfor %}</ul>
   {% endif %}
   {% if view.words %}
@@ -149,6 +151,6 @@
 </section>
 {% endif %}
 
-<p class="end">Романтика маршрутов · {{ season.title }} · {{ starts }} — {{ ends }}</p>
+<p class="end">Здесь {{ season.title }} заканчивается. Страна следующего сезона уже в рандомайзере.<br>Романтика маршрутов · {{ starts }} — {{ ends }}</p>
 </body>
 </html>

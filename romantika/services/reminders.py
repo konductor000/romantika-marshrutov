@@ -15,6 +15,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.services import content, summary
+from romantika.services.content import WeekDTO
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ async def send(
     season_id: int,
     week_number: int | None,
     telegram: MessageSender,
-    text_for: Callable[[str], str] | None = None,
+    text_for: Callable[[WeekDTO], str] | None = None,
     now: datetime,
 ) -> ReminderResult:
     """Send one reminder to every recipient of the week; a failed delivery is counted, not raised."""
@@ -69,7 +70,10 @@ async def send(
     if week is None:
         return ReminderResult(sent=0, total=0, week_title=None)
     recipients = await summary.reminder_recipients(session, season_id=season_id, week_number=week.number)
-    text = (text_for or ru.reminder_thursday)(week.title)
+    if text_for is None:
+        # On the last day the Sunday text («сегодня до 18:00»), before it the Thursday one.
+        text_for = ru.reminder_sunday if week.ends_on == to_moscow(now).date() else ru.reminder_thursday
+    text = text_for(week)
     sent = 0
     for user_id in recipients:
         try:
@@ -81,7 +85,8 @@ async def send(
 
 
 async def mark_sent(session: AsyncSession, key: str, *, now: datetime) -> bool:
-    """Claim a reminder slot (`YYYY-MM-DD:<slug>`); False when it was already claimed today."""
+    """Claim a once-only slot by key (`YYYY-MM-DD:<slug>` for reminders, `<season>:journals`
+    for the season-end run); False when it was already claimed."""
     from sqlalchemy.dialects.postgresql import insert as pg_insert
 
     from romantika.db import models

@@ -6,7 +6,8 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -17,6 +18,11 @@ from romantika.web.deps import AppState
 from romantika.web.routes import admin_api, api, media, public
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+async def _value_error(_: Request, exc: Exception) -> JSONResponse:
+    """A service refused the input (`ValueError`): the client's fault, said in Russian."""
+    return JSONResponse({"detail": str(exc)}, status_code=422)
 
 
 def create_app(
@@ -33,6 +39,7 @@ def create_app(
         media_store=media_store,
         clock=clock or moscow_now,
     )
+    app.add_exception_handler(ValueError, _value_error)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(public.router)
     app.include_router(api.router)

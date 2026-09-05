@@ -19,5 +19,7 @@ def make_bot(settings: Settings) -> Bot:
     proxy = settings.telegram_proxy or None
     session = AiohttpSession(proxy=proxy, timeout=60) if proxy else AiohttpSession(timeout=60)
     if settings.telegram_api_base:
+        if settings.env != "dev":
+            raise RuntimeError("TELEGRAM_API_BASE is for the local stand only (ENV=dev)")
         session.api = TelegramAPIServer.from_base(settings.telegram_api_base.rstrip("/"))
     return Bot(settings.bot_token, session=session)

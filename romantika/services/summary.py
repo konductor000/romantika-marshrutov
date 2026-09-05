@@ -25,6 +25,7 @@ CORE_STREAK = 2
 
 #: The quotes of the draft post are cut to this many characters, as in legacy.
 QUOTE_LENGTH = 120
+RULE = "━━━━━━━━━━"
 
 #: Intents that mean «I am doing this week» and therefore get a reminder.
 TAKING = (models.IntentChoice.TAKE, models.IntentChoice.TRY)
@@ -90,7 +91,25 @@ async def core(session: AsyncSession, *, season_id: int, today: date) -> CoreVie
     return await _core(session, season=season, today=today)
 
 
-async def draft_post(session: AsyncSession, *, season_id: int, week_number: int, today: date) -> str:
+@dataclass(frozen=True, slots=True)
+class DraftPost:
+    """The Sunday post to copy, and what Mila should know but must not paste."""
+
+    week_number: int
+    week_title: str
+    text: str
+    notes: list[str]
+
+    def as_message(self) -> str:
+        """One bot message: the post between rules, the remarks under it."""
+        head = f"Черновик «Привала» · неделя {self.week_number} · {self.week_title}"
+        parts = [head, "", RULE, "", self.text, "", RULE]
+        if self.notes:
+            parts += [""] + [f"Не для поста: {note}" for note in self.notes]
+        return "\n".join(parts)
+
+
+async def draft_post(session: AsyncSession, *, season_id: int, week_number: int, today: date) -> DraftPost:
     """The Sunday «Привал» post, ready to copy and finish by hand (DOMAIN §8).
 
     Square brackets are Mila's placeholders: the bot cannot know what she made this week and
@@ -100,16 +119,14 @@ async def draft_post(session: AsyncSession, *, season_id: int, week_number: int,
     """
     season = await content.require_season(session, season_id)
     target = await _require_week(session, season_id, week_number)
+    if today < target.starts_on:
+        note = f"неделя ещё не началась, откроется {target.starts_on:%d.%m} — черновик появится вместе с ней"
+        return DraftPost(week_number=target.number, week_title=target.title, text="", notes=[note])
     submitted = await stamps.for_week(session, season_id=season_id, week_id=target.id)
     quotes = await _quotes(session, season_id=season_id, week_id=target.id)
     names = await _names(session, season_id)
 
     lines = [
-        f"Черновик «Привала» · неделя {target.number} · {target.title}",
-        "Скопировать, дописать своё, опубликовать в воскресенье в 20:00.",
-        "",
-        "━━━━━━━━━━",
-        "",
         f"Привал. Неделя «{target.title}» закончилась.",
         "",
         "[ЗДЕСЬ ТВОЁ: фото своего результата и что не получилось. Обязательно, даже если не прислал никто]",
@@ -117,9 +134,9 @@ async def draft_post(session: AsyncSession, *, season_id: int, week_number: int,
     ]
     if submitted:
         lines.append("На этой неделе задание сделали:")
-        for user_id, level in submitted.items():
-            mark = "⭐ " if level is StampLevel.MAX else "· "
-            quote = quotes.get(user_id, "")[:QUOTE_LENGTH]
+        for user_id in sorted(submitted, key=lambda uid: names.get(uid, str(uid)).lower()):
+            mark = "⭐ " if submitted[user_id] is StampLevel.MAX else "· "
+            quote = _clip(quotes.get(user_id, ""), QUOTE_LENGTH)
             lines.append(f"{mark}{names.get(user_id, str(user_id))}" + (f" — {quote}" if quote else ""))
     else:
         lines.append("[Пока никто не прислал в бота]")
@@ -131,18 +148,17 @@ async def draft_post(session: AsyncSession, *, season_id: int, week_number: int,
         "[ЗАКРЫВАЮЩИЙ ВОПРОС — про предмет перед глазами, а не про чувства]",
         "",
         f"#маршрут_итоги {season.hashtag}".strip(),
-        "",
-        "━━━━━━━━━━",
     ]
 
     intents = await people.intents(session, season_id=season_id, week_id=target.id)
     silent = [user_id for user_id, choice in sorted(intents.items()) if choice in TAKING and user_id not in submitted]
+    notes: list[str] = []
     if silent:
         joined = ", ".join(names.get(user_id, str(user_id)) for user_id in silent)
-        lines += ["", f"Не для поста: взялись и не прислали — {joined}"]
+        notes.append(f"взялись и не прислали — {joined}")
     if today < target.ends_on:
-        lines += ["", f"Не для поста: неделя ещё идёт, заканчивается {target.ends_on:%d.%m}."]
-    return "\n".join(lines)
+        notes.append(f"неделя ещё идёт, заканчивается {target.ends_on:%d.%m}.")
+    return DraftPost(week_number=target.number, week_title=target.title, text="\n".join(lines), notes=notes)
 
 
 async def _core(session: AsyncSession, *, season: SeasonDTO, today: date) -> CoreView:
@@ -194,6 +210,15 @@ async def _report_count(session: AsyncSession, *, season_id: int, week_id: int) 
         )
     )
     return int((await session.execute(query)).scalar_one())
+
+
+def _clip(text: str, limit: int) -> str:
+    """Cut at a word with an ellipsis, so Mila sees the quote goes on."""
+    if len(text) <= limit:
+        return text
+    head = text[: limit - 1]
+    cut = head.rsplit(" ", 1)[0] if " " in head else head
+    return cut.rstrip(" ,;:—-") + "…"
 
 
 async def _quotes(session: AsyncSession, *, season_id: int, week_id: int) -> dict[int, str]:

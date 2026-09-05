@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from romantika.config import Settings
@@ -92,6 +94,7 @@ async def journal_out(
     reports = await journal.reports_for_user(session, season_id=season.id, user_id=user_id)
     user = await people.get_user(session, user_id)
     assert user is not None
+    week_numbers = {w.id: w.number for w in view.weeks}
     return schemas.JournalOut(
         season=season_out(season),
         user=schemas.Me(id=user.id, first_name=user.first_name, username=user.username, is_admin=principal_admin),
@@ -99,7 +102,10 @@ async def journal_out(
         weeks=weeks_out(view, today=today),
         reports=[reports_out(r, week_ends={w.number: w.ends_on for w in view.weeks}, today=today) for r in reports],
         achievements=jview.achievements,
-        words=[schemas.WordOut(word=w.word, meaning=w.meaning) for w in jview.words],
+        words=[
+            schemas.WordOut(word=w.word, meaning=w.meaning, week_number=week_numbers.get(w.week_id or -1))
+            for w in jview.words
+        ],
         season_words=[
             schemas.WordOut(word=w.word, meaning=w.meaning, week_number=w.number) for w in jview.season_words
         ],
@@ -125,6 +131,24 @@ def reports_out(r: ReportDTO, *, week_ends: dict[int, date], today: date) -> sch
             for m in r.media
         ],
     )
+
+
+async def media_by_report(session: AsyncSession, report_ids: Sequence[int]) -> dict[int, list[schemas.MediaOut]]:
+    """Visible files of the given reports, `{report_id: [MediaOut]}`, in the order they were sent."""
+    wanted = sorted({int(report_id) for report_id in report_ids})
+    if not wanted:
+        return {}
+    query = (
+        select(models.Media)
+        .where(models.Media.report_id.in_(wanted), models.Media.hidden_at.is_(None))
+        .order_by(models.Media.created_at, models.Media.id)
+    )
+    out: dict[int, list[schemas.MediaOut]] = {}
+    for m in (await session.execute(query)).scalars():
+        out.setdefault(m.report_id, []).append(
+            schemas.MediaOut(id=str(m.id), url=f"/media/{m.id}", mime=m.mime, downloaded=m.downloaded_at is not None)
+        )
+    return out
 
 
 async def report_out(session: AsyncSession, report_id: int, *, today: date) -> schemas.ReportOut | None:
@@ -173,7 +197,7 @@ async def home_out(
             **base.model_dump(),
             intent=choice.value if choice else None,
             reports_count=await reports.count_for_week(session, user_id=user_id, week_id=current.id),
-            deadline=ru.deadline_text(current),
+            deadline=ru.deadline_short(current),
         )
     upcoming = next((w for w in weeks if w.starts_on > today), None)
     wish = await journal.wish_for(session, season_id=season.id, user_id=user_id)
@@ -206,12 +230,14 @@ async def home_out(
         wish=wish,
         texts=schemas.TextsOut(
             greeting=ru.greeting(season),
-            help=ru.HELP,
+            help=ru.help_text(app=True),
             end_of_season=ru.end_of_season_text(season),
             write_prompt=ru.WRITE_PROMPT,
             word_prompt=ru.WORD_PROMPT,
             fact_prompt=ru.FACT_PROMPT,
             journal_now=ru.JOURNAL_NOW.format(end=ru.date_genitive(season.ends_on)),
+            level_names={(level.value if level else ""): name for level, name in ru.LEVEL_NAMES.items()},
+            freeze_reasons=dict(ru.FREEZE_REASONS),
         ),
         links=schemas.LinksOut(
             channel_url=settings.channel_url or None,

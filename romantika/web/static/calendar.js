@@ -41,9 +41,9 @@
     const tone = TONES[r.num - 1];
     const box = document.getElementById("result");
     box.innerHTML = `
-      <p class="eyebrow">Ваш день</p>
+      <p class="eyebrow">Твой день</p>
       <h2>${r.num} ${esc(sign.name)} ${esc(sign.emoji)}</h2>
-      <p class="kin">кин ${r.kin} из 260 · ${esc(sign.name_academic)} · ${esc(sign.latin)} · ${esc(sign.symbol)}</p>
+      <p class="kin">кин ${r.kin} из 260${sign.name_academic && sign.name_academic !== sign.name ? ` · ${esc(sign.name_academic)}` : ""} · ${esc(sign.latin)} · ${esc(sign.symbol)}</p>
       <p>${esc(sign.meaning)}</p>
       <p><b>Предназначение.</b> ${esc(sign.destiny)}</p>
       <p><b>Число ${r.num}${tone && tone.name ? " · " + esc(tone.name) : ""}.</b> ${esc(tone ? tone.text : "")}</p>
